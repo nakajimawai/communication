@@ -2,13 +2,14 @@ import rclpy
 import time
 import csv
 import math
+import socket
+import struct
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
-from sensor_msgs_py import point_cloud2 #used to read points 
+from sensor_msgs_py import point_cloud2 #Point Cloud2を読み取るためのモジュール
 from ros2_whill.msg import BoolMultiArray
-n=0
 
-class lidar_Subscriber(Node):
+class LiDAR_Subscriber(Node):
 
     def __init__(self):
         super().__init__('lidar_subscriber')
@@ -20,28 +21,14 @@ class lidar_Subscriber(Node):
         xyz_points = point_cloud2.read_points(lidar_msg,field_names=('x','y','z','intensity'))
         self.Filter_Points(xyz_points)
         self.obstacle_info.data = [False, False, False, False]
-        self.Obstacle_Detection()
-        
-        '''
-        global n
-        data_len = self.Filter_Points(xyz_points)
-        with open('output2.csv', mode='a', newline='') as file:   
-            writer = csv.writer(file)
-            writer.writerow(data_len)
-            n+=1
-            if n== 100:
-                file.close()
-                print("クローズ")
-                time.sleep(5)   
-        '''             
-        
+        self.Obstacle_Detection()         
         
     def Filter_Points(self, xyz_points):
         self.obstacle = []
         #print(xyz_points)
         for data in xyz_points:
             if data[2] == 0:   # z=0のデータのみを取り出す
-                x = data[0] - 0.5
+                x = data[0] - 0.5   #電動車いすに載せた際のオフセット
                 y = data[1] 
                 if math.sqrt((x**2)+(y**2)) <= 0.9:   # 
                     self.obstacle.append((data[0], data[1]))              
@@ -52,25 +39,16 @@ class lidar_Subscriber(Node):
         
             for x, y in self.obstacle:
                 direction = math.degrees(math.atan2(y, x))
-                #self.get_logger().info(f"Obstacle detected at direction: {direction}°")
                 if (0 <= direction <=45) or (-45 <= direction <0):   #前方に検出した場合
-                    #y = y - 0.5   #電動車いすに載せた際のオフセット
-                    #if math.sqrt((x**2)+(y**2)) <= 0.9:
                         self.obstacle_info.data[0] = True 
 
                 elif (135 <= direction <=180) or (-180 < direction <=-135):   #後方に検出した場合
-                    #y = y - 0.9   #電動車いすに載せた際のオフセット
-                    #if math.sqrt((x**2)+(y**2)) <= 0.4:
                         self.obstacle_info.data[3] = True
                 
                 elif (45 < direction <135):   #左方向に検出した場合
-                    #y = y - 0.5   #電動車いすに載せた際のオフセット
-                    #if math.sqrt((x**2)+(y**2)) <= 1.2:
                         self.obstacle_info.data[2] = True 
 
                 elif (-135 < direction <-45):   #右方向に検出した場合
-                    #y = y - 0.5   #電動車いすに載せた際のオフセット
-                    #if math.sqrt((x**2)+(y**2)) <= 1.2:
                         self.obstacle_info.data[1] = True 
 
             print(self.obstacle_info)
@@ -78,29 +56,49 @@ class lidar_Subscriber(Node):
 
         else:
             #self.get_logger().info("No obstacles detected.")
-            self.pub.publish(self.obstacle_info)   
-
-        '''
-        self.filtered_points = [point for point in xyz_points if point[2] == 0.0]# z座標が0の点を選別
-       
-        for xy in filtered_points:
-            print(f"X: {xy[0]}, Y:{xy[1]}, Z: {xy[2]}, INTENSITY: {xy[3]}")
+            self.pub.publish(self.obstacle_info)
             
-            
-        data = [len(filtered_points)]
-
-        return data
-        '''
-            
+class Send_Obstacle_Info(Node):
+    def  __init__(self):
+        super().__init__('send_obstacle_info')
+        self.sub = self.create_subscription(BoolMultiArray, 'obstacle_info', self.obstacle_info_callback, 10)
+        
+        self.HOST = '192.168.1.103'
+        self.PORT = 50000
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        
+    '''障害物情報を購読してノートPC1に送信''' 
+    '''
+    def obstacle_info_callback(self, obstacle_msg):
+        packed_data = struct.pack('b'*len(obstacle_msg.data), *obstacle_msg.data)
+        self.client_socket.connect((self.HOST, self.PORT))
+        print(packed_data)        
+        self.client_socket.send(packed_data)
+        self.client_socket.close()    
+    '''
+    
+    def test(self):
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect(('192.168.1.103', 50000))
+        data = "test"
+        client.send(data.encode("utf-8"))
+        buf = client.recv(4096)
+        print(buf)
     
 def main():
     rclpy.init()
-    lidar_sub_node = lidar_Subscriber()
+    lidar_sub_node = LiDAR_Subscriber()
+    socket_obstacle_node = Send_Obstacle_Info()
+    executor = rclpy.executors.MultiThreadedExecutor()
+    executor.add_node(lidar_sub_node)
+    executor.add_node(socket_obstacle_node)
     try:
-        rclpy.spin(lidar_sub_node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
+    executor.shutdown()
     lidar_sub_node.destroy_node()
+    socket_obstacle_node.destroy_node()
     rclpy.shutdown()
     
 if __name__ == '__main__':
