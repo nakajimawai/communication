@@ -3,7 +3,7 @@ import time
 import csv
 import math
 import socket
-import struct
+import pickle
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs_py import point_cloud2 #Point Cloud2を読み取るためのモジュール
@@ -51,7 +51,7 @@ class LiDAR_Subscriber(Node):
                 elif (-135 < direction <-45):   #右方向に検出した場合
                         self.obstacle_info.data[1] = True 
 
-            print(self.obstacle_info)
+            #print(self.obstacle_info)
             self.pub.publish(self.obstacle_info)
 
         else:
@@ -63,27 +63,22 @@ class Send_Obstacle_Info(Node):
         super().__init__('send_obstacle_info')
         self.sub = self.create_subscription(BoolMultiArray, 'obstacle_info', self.obstacle_info_callback, 10)
         
-        self.HOST = '192.168.1.103'
-        self.PORT = 50000
-        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # サーバーソケットを作成
+        server_address = ('192.168.1.102', 50000)
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind(server_address)
+        self.server_socket.listen(1)
         
     '''障害物情報を購読してノートPC1に送信''' 
-    '''
     def obstacle_info_callback(self, obstacle_msg):
-        packed_data = struct.pack('b'*len(obstacle_msg.data), *obstacle_msg.data)
-        self.client_socket.connect((self.HOST, self.PORT))
-        print(packed_data)        
-        self.client_socket.send(packed_data)
-        self.client_socket.close()    
-    '''
-    
-    def test(self):
-        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client.connect(('192.168.1.103', 50000))
-        data = "test"
-        client.send(data.encode("utf-8"))
-        buf = client.recv(4096)
-        print(buf)
+        
+        client_socket, client_address = self.server_socket.accept()   # クライアントからの接続を待機
+        print("クライアントが接続しました:", client_address)
+        
+        data = pickle.dumps(obstacle_msg.data)    # ブール値の配列をバイト列に変換
+        client_socket.send(data)
+        
+        client_socket.close()
     
 def main():
     rclpy.init()
