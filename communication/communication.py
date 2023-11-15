@@ -70,10 +70,10 @@ class Socket_Subscriber(Node):
             self.twist.angular.z = 0.0
         elif msg.data == 'a':
             self.twist.linear.x = 0.0
-            self.twist.angular.z = 2.3
+            self.twist.angular.z = 1.1
         elif msg.data == 'd':
             self.twist.linear.x = 0.0
-            self.twist.angular.z = -2.3
+            self.twist.angular.z = -1.1
         elif msg.data == 'q':
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.0
@@ -86,13 +86,13 @@ class Socket_Subscriber(Node):
         self.pub_velocity.publish(self.twist)
         
 '''LiDARからの障害物情報に基づいて衝突防止動作を行うノード'''  
-class LiDAR_Subscriber(Node):
+class Obstacle_Info_Subscriber(Node):
     global str_msg
     
     def __init__(self):
-        super().__init__('lidar_subscriber')
+        super().__init__('obstacle_info_subscriber')
         #障害物がどこにあるかを購読する用
-        self.sub_lidar = self.create_subscription(BoolMultiArray, 'obstacle_info', self.callback_lidar, 10)
+        self.sub_obstacle_info = self.create_subscription(BoolMultiArray, 'obstacle_info', self.callback_lidar, 10)
         
         #電動車いすを停止させるか判断するため文字を購読する用
         self.sub_socket_stop = self.create_subscription(String, 'socket_topic', self.callback_stop_judge, 10)
@@ -110,24 +110,25 @@ class LiDAR_Subscriber(Node):
          
     def callback_lidar(self, obstacle_info):
         #↓移動方向に障害物がある場合は停止
-        print(obstacle_info)
-        if (obstacle_info.data[0] == True) and (self.msg_str.data == 'w'):
+        #print(obstacle_info)
+        if (obstacle_info.data[1]) and (self.msg_str.data == 'w'):
             self.pub_socket_stop.publish(self.msg_stop)
-        elif(obstacle_info.data[1] == True) and (self.msg_str.data == 'd'):
+        elif(obstacle_info.data[3] or obstacle_info.data[5]) and (self.msg_str.data == 'd'):
             self.pub_socket_stop.publish(self.msg_stop)
-        elif(obstacle_info.data[2] == True) and (self.msg_str.data == 'a'):
+        elif(obstacle_info.data[9] or obstacle_info.data[11]) and (self.msg_str.data == 'a'):
             self.pub_socket_stop.publish(self.msg_stop)
-        elif(obstacle_info.data[3] == True) and (self.msg_str.data == 'x'):
-            self.pub_socket_stop.publish(self.msg_stop)        
+        elif(obstacle_info.data[7]) and (self.msg_str.data == 'x'):
+            self.pub_socket_stop.publish(self.msg_stop)
+                    
 def main():
     rclpy.init()
     socket_node = Socket_Publisher()
     velocity_node = Socket_Subscriber()
-    lidar_sub_node = LiDAR_Subscriber()
+    obstacl_info_sub_node = Obstacle_Info_Subscriber()
     executor = rclpy.executors.MultiThreadedExecutor()
     executor.add_node(socket_node)
     executor.add_node(velocity_node)
-    executor.add_node(lidar_sub_node)
+    executor.add_node(obstacl_info_sub_node)
     try:
         executor.spin()
     except KeyboardInterrupt:
@@ -135,6 +136,7 @@ def main():
     executor.shutdown()
     socket_node.destroy_node()
     velocity_node.destroy_node()
+    obstacl_info_sub_node.destroy_node()
     rclpy.shutdown()
 
 if __name__ == '__main__':
