@@ -23,7 +23,7 @@ class LiDAR_Subscriber(Node):
     def callback(self, lidar_msg):
         xyz_points = point_cloud2.read_points(lidar_msg,field_names=('x','y','z','intensity'))
         self.Filter_Points(xyz_points)
-        self.obstacle_info.data = [False, False, False, False]
+        self.obstacle_info.data = [False]*12
         self.Obstacle_Detection()         
         
     def Filter_Points(self, xyz_points):
@@ -39,25 +39,54 @@ class LiDAR_Subscriber(Node):
     '''障害物の方向を特定'''                    
     def Obstacle_Detection(self):
         if self.obstacle:   # 障害物が検出された場合
-        
+            time_start = time.time()
+            
             for x, y in self.obstacle:
                 direction = math.degrees(math.atan2(y, x))
-                if (0 <= direction <=45) or (-45 <= direction <0):   #前方に検出した場合
-                        self.obstacle_info.data[0] = True 
-
-                elif (135 <= direction <=180) or (-180 < direction <=-135):   #後方に検出した場合
-                        self.obstacle_info.data[3] = True
                 
-                elif (45 < direction <135):   #左方向に検出した場合
-                        #if math.sqrt((x**2)+(y**2)) <= 0.5:
-                            self.obstacle_info.data[2] = True 
+                '''前の監視'''
+                if (20 <= direction < 45):
+                    self.obstacle_info.data[0] = True
+                    
+                if (0 <= direction < 20) or (-20 <= direction <0):   #前方停止範囲に検出した場合
+                    self.obstacle_info.data[1] = True
+                
+                if (-45 <= direction <= -20):
+                    self.obstacle_info.data[2] = True
+                        
+                '''右の監視'''
+                if (-65 <= direction < -45):   #右方向停止範囲に検出した場合
+                    self.obstacle_info.data[3] = True 
+                            
+                if (-115 <= direction < -65):   
+                            self.obstacle_info.data[4] = True 
 
-                elif (-135 < direction <-45):   #右方向に検出した場合
-                    #if x == 0:
-                        #if math.sqrt((x**2)+(y**2)) <= 0.5:
-                            self.obstacle_info.data[1] = True 
+                if (-135 <= direction < -115):   #右方向停止範囲に検出した場合
+                            self.obstacle_info.data[5] = True 
+
+                '''後ろの監視'''
+                if (-160 <= direction < -135):   
+                            self.obstacle_info.data[6] = True 
+                                                                                    
+                if (-180 <= direction <= -160) or (160 <= direction < 180):   #後方停止範囲に検出した場合
+                        self.obstacle_info.data[7] = True
+                        
+                if (135 <= direction < 160):   
+                            self.obstacle_info.data[8] = True
+                            
+                '''左の監視'''
+                if (115 <= direction < 135):   #左方向停止範囲に検出した場合
+                            self.obstacle_info.data[9] = True 
+
+                if (65 <= direction < 115):   
+                            self.obstacle_info.data[10] = True 
+                            
+                if (45 <= direction < 65):   #左方向停止範囲に検出した場合
+                            self.obstacle_info.data[11] = True 
 
             #print(self.obstacle_info)
+            time_end = time.time()
+            print("1回の監視の処理時間：", (time_end - time_start))
             self.pub.publish(self.obstacle_info)
 
         else:
@@ -69,8 +98,6 @@ class Send_Obstacle_Info(Node):
     def  __init__(self):
         super().__init__('send_obstacle_info')
         self.sub = self.create_subscription(BoolMultiArray, 'obstacle_info', self.obstacle_info_callback, 10)
-        #self.sub_socket = self.create_subscription(Twist, 'cmd_vel', self.state_info_callback, 10)
-        #self.sub_socket = self.create_subscription(String, 'socket_topic', self.state_info_callback, 10)
         # 障害物情報を送信するサーバーソケットを作成
         server_address_obstacle = ('192.168.1.102', 50000)
         self.server_socket_o = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
