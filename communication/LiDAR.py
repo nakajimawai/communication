@@ -55,13 +55,13 @@ class LiDAR_Subscriber(Node):
                     self.obstacle_info.data[2] = True
                         
                 '''右の監視'''
-                if (-65 <= direction < -45):   #右方向停止範囲に検出した場合
+                if (-85 <= direction < -45):   #右方向停止範囲に検出した場合
                     self.obstacle_info.data[3] = True 
                             
-                if (-115 <= direction < -65):   
+                if (-110 <= direction < -85):   
                             self.obstacle_info.data[4] = True 
 
-                if (-135 <= direction < -115):   #右方向停止範囲に検出した場合
+                if (-135 <= direction < -110):   
                             self.obstacle_info.data[5] = True 
 
                 '''後ろの監視'''
@@ -75,13 +75,13 @@ class LiDAR_Subscriber(Node):
                             self.obstacle_info.data[8] = True
                             
                 '''左の監視'''
-                if (115 <= direction < 135):   #左方向停止範囲に検出した場合
+                if (110 <= direction < 135):   
                             self.obstacle_info.data[9] = True 
 
-                if (65 <= direction < 115):   
+                if (85 <= direction < 110):   
                             self.obstacle_info.data[10] = True 
                             
-                if (45 <= direction < 65):   #左方向停止範囲に検出した場合
+                if (45 <= direction < 85):   #左方向停止範囲に検出した場合
                             self.obstacle_info.data[11] = True 
 
             #print(self.obstacle_info)

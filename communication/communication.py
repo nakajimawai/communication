@@ -113,9 +113,9 @@ class Obstacle_Info_Subscriber(Node):
         #print(obstacle_info)
         if (obstacle_info.data[1]) and (self.msg_str.data == 'w'):
             self.pub_socket_stop.publish(self.msg_stop)
-        elif(obstacle_info.data[3] or obstacle_info.data[5]) and (self.msg_str.data == 'd'):
+        elif(obstacle_info.data[3]) and (self.msg_str.data == 'd'):
             self.pub_socket_stop.publish(self.msg_stop)
-        elif(obstacle_info.data[9] or obstacle_info.data[11]) and (self.msg_str.data == 'a'):
+        elif(obstacle_info.data[11]) and (self.msg_str.data == 'a'):
             self.pub_socket_stop.publish(self.msg_stop)
         elif(obstacle_info.data[7]) and (self.msg_str.data == 'x'):
             self.pub_socket_stop.publish(self.msg_stop)
