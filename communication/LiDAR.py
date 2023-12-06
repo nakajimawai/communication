@@ -28,65 +28,87 @@ class LiDAR_Subscriber(Node):
         
     def Filter_Points(self, xyz_points):
         self.obstacle = []
-        #print(xyz_points)
+        cnt =0
         for data in xyz_points:
-            if data[2] == 0:   # z=0のデータのみを取り出す
-                x = data[0] - 0.5   #電動車いすに載せた際のオフセット
+            if (-1.5 <= data[2] <= 0.0):   # 床以外のデータのみを取り出す
+                x = data[0] -0.5  #電動車いすに載せた際のオフセット
                 y = data[1] 
-                if math.sqrt((x**2)+(y**2)) <= 0.9:   # 
-                    self.obstacle.append((data[0], data[1]))              
+                distance = math.sqrt((x**2)+(y**2))
+                if distance <= 0.9:
+                    self.obstacle.append((data[0], data[1], data[2], data[3]))
+                
+                #direction = math.degrees(math.atan2(y, x))
+                #if (1 <= abs(x) < 1.3) and ((-180 <= direction <= -160) or (160 <= direction < 180)) and (2.0 <data[3]): cnt+=1
+        #if 20 <= cnt: print("誤")           
+        #time.sleep(1)            
 
     '''障害物の方向を特定'''                    
     def Obstacle_Detection(self):
         if self.obstacle:   # 障害物が検出された場合
             time_start = time.time()
-            
-            for x, y in self.obstacle:
+            noise_removal_cnt = [0]*12   # ノイズ座標除去のためのカウンタ配列
+            for x, y, z, intensity in self.obstacle:
                 direction = math.degrees(math.atan2(y, x))
-                
-                '''前の監視'''
-                if (20 <= direction < 45):
-                    self.obstacle_info.data[0] = True
+                if (2.0 < intensity):   # 強度の低い座標データを除去
+                    '''前の監視'''
+                    if (20 <= direction < 45):
+                        #self.obstacle_info.data[0] = True
+                        noise_removal_cnt[0]+=1
                     
-                if (0 <= direction < 20) or (-20 <= direction <0):   #前方停止範囲に検出した場合
-                    self.obstacle_info.data[1] = True
-                
-                if (-45 <= direction <= -20):
-                    self.obstacle_info.data[2] = True
+                    if (-20 < direction < 20):   #前方停止範囲に検出した場合
+                        #print("x：", x)
+                        if 0 <= x < 1.1:
+                            #print("ノートPCを検出", x)
+                            pass
+                        else:
+                            #print("x：", x)
+                            #print("強度：", intensity)
+                            noise_removal_cnt[1]+=1
+                    
+                    if (-45 <= direction <= -20):
+                        noise_removal_cnt[2]+=1
                         
-                '''右の監視'''
-                if (-85 <= direction < -45):   #右方向停止範囲に検出した場合
-                    self.obstacle_info.data[3] = True 
-                            
-                if (-110 <= direction < -85):   
-                            self.obstacle_info.data[4] = True 
+                    '''右の監視'''
+                    if (-85 <= direction < -45):   #右方向停止範囲に検出した場合
+                        noise_removal_cnt[3]+=1  
+                          
+                    if (-110 <= direction < -85):   
+                        noise_removal_cnt[4]+=1
 
-                if (-135 <= direction < -110):   
-                            self.obstacle_info.data[5] = True 
+                    if (-135 <= direction < -110):   
+                       noise_removal_cnt[5]+=1 
 
-                '''後ろの監視'''
-                if (-160 <= direction < -135):   
-                            self.obstacle_info.data[6] = True 
+                    '''後ろの監視'''
+                    if (-160 <= direction < -135):   
+                        noise_removal_cnt[6]+=1 
                                                                                     
-                if (-180 <= direction <= -160) or (160 <= direction < 180):   #後方停止範囲に検出した場合
-                        self.obstacle_info.data[7] = True
+                    if (-180 <= direction <= -160) or (160 <= direction < 180):   #後方停止範囲に検出した場合
+                        noise_removal_cnt[7]+=1
                         
-                if (135 <= direction < 160):   
-                            self.obstacle_info.data[8] = True
+                    if (135 <= direction < 160):   
+                        noise_removal_cnt[8]+=1
                             
-                '''左の監視'''
-                if (110 <= direction < 135):   
-                            self.obstacle_info.data[9] = True 
+                    '''左の監視'''
+                    if (110 <= direction < 135):   
+                        noise_removal_cnt[9]+=1 
 
-                if (85 <= direction < 110):   
-                            self.obstacle_info.data[10] = True 
+                    if (85 <= direction < 110):   
+                        noise_removal_cnt[10]+=1 
                             
-                if (45 <= direction < 85):   #左方向停止範囲に検出した場合
-                            self.obstacle_info.data[11] = True 
+                    if (45 <= direction < 85):   #左方向停止範囲に検出した場合
+                        noise_removal_cnt[11]+=1 
 
-            #print(self.obstacle_info)
-            time_end = time.time()
-            print("1回の監視の処理時間：", (time_end - time_start))
+            #time_end = time.time()
+            #if cnt>0: 
+            #print("1回の監視の処理時間：", (time_end - time_start))
+            #print("検知回数：", cnt)
+            #time.sleep(1)
+            
+            for i in range(len(noise_removal_cnt)):
+                if (20 <= noise_removal_cnt[i]):   # ノイズ座標除去(1スキャンで、正しく取得した座標に比べてノイズ座標は取得数が少ない)
+                    self.obstacle_info.data[i] = True
+            
+            if self.obstacle_info.data[1] == True: print("検知")
             self.pub.publish(self.obstacle_info)
 
         else:
