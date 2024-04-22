@@ -13,6 +13,7 @@ from ros2_whill.msg import BoolMultiArray
 from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 from sklearn.cluster import KMeans
+import warnings
 
 class LiDAR_Subscriber(Node):
 
@@ -21,6 +22,8 @@ class LiDAR_Subscriber(Node):
         self.sub = self.create_subscription(PointCloud2, 'rslidar_points', self.callback, 10)
         self.pub = self.create_publisher(BoolMultiArray, 'obstacle_info', 10)
         self.obstacle_info = BoolMultiArray()
+        
+        warnings.filterwarnings("ignore")# 警告を無効にする
             
     def callback(self, lidar_msg):
         xyz_points = point_cloud2.read_points(lidar_msg,field_names=('x','y','z','intensity'))
@@ -43,44 +46,55 @@ class LiDAR_Subscriber(Node):
                 intensity = data[3]
                 distance = math.sqrt((x**2)+(y**2))
                 if distance <= 900:
-                    if -20 < direction < 20:
+                    if -45 < direction < 45: # 前方の距離データは専用のリストに格納、エッジ効果による外れ値除去のため
                         self.forward_obstacle_list.append((x+500, y, z, intensity)) # 角度の算出をするのでxをもとの値に戻す
                     else:
-                        if -1550 < z:
+                        if -1540 < z:
                             self.obstacle_list.append((x+500, y, z, intensity))
 
     '''障害物の方向を算出、通信用リストに追加'''
     def Obstacle_Detection(self):
         noise_removal_cnt = [0]*12
 
+        '''前の監視'''
         if self.forward_obstacle_list:
             near_floor_list = []# 床の外れ値を除くためのクラスタリング用リスト
+            above_floor_list = [] # 床より上    のデータ
             for data in self.forward_obstacle_list:
                 if -1600 <= data[2] <= -1450: # 床付近を監視
                     near_floor_list.append(data)
 
-                    if 2 <= len(near_floor_list): #データが2つ以上ないとクラスタリングはできない
-                        filtered_obstacle_list = self.remove_outlier(near_floor_list)
-
-                        for data in filtered_obstacle_list:
-                            if -1540 <= data[2]: #前方警告範囲に検出
-                                noise_removal_cnt[1] += 1
-                
                 elif -1450 < data[2]: # 床より上を監視
-                    if 1000 <= data[0]: # ユーザと視線入力用ノートPCの距離データは除く
-                        noise_removal_cnt[1] += 1
+                    above_floor_list.append(data)
+
+            if 2 <= len(near_floor_list): #データが2つ以上ないとクラスタリングはできない
+                filtered_obstacle_list = self.remove_outlier(near_floor_list) # エッジ効果で生じる外れ値を除去
+                for data in filtered_obstacle_list:
+                    if -1540 <= data[2]:
+                        direction= math.degrees(math.atan2(data[1], data[0]))
+
+                        if (20 <= direction < 45) and (500 < data[0]): #前方警告範囲に検出、ユーザの距離データは除く
+                            noise_removal_cnt[0]+=1
+                        if (-20 <= direction < 20) and (1000 < data[0]): #前方停止範囲に検出、ユーザと視線入力用ノートPCの距離データは除く
+                            noise_removal_cnt[1]+=1
+                        if (-45 <= direction < -20) and (500 < data[0]): #前方警告範囲に検出、ユーザの距離データは除く
+                            noise_removal_cnt[2]+=1
+
+            if above_floor_list:# 障害物が検出された場合
+                for data in above_floor_list:
+                    direction= math.degrees(math.atan2(data[1], data[0]))
+
+                    if (20 <= direction < 45) and (500 < data[0]): #前方警告範囲に検出、ユーザの距離データは除く
+                        noise_removal_cnt[0]+=1
+                    if (-20 <= direction < 20) and (1000 < data[0]): #前方停止範囲に検出、ユーザと視線入力用ノートPCの距離データは除く
+                        noise_removal_cnt[1]+=1
+                    if (-45 <= direction < -20) and (500 < data[0]): #前方警告範囲に検出、ユーザの距離データは除く
+                        noise_removal_cnt[2]+=1
 
         if self.obstacle_list:   # 障害物が検出された場合
             for x, y, z, intensity in self.obstacle_list:
                 direction = math.degrees(math.atan2(y, x))
                 if (2.0 < intensity):   # 反射強度の低い座標データを除去
-                    '''前の監視'''
-                    if (20 <= direction < 45): #前方警告範囲に検出
-                        noise_removal_cnt[0]+=1
-                    
-                    if (-45 <= direction <= -20): #前方警告範囲に検出
-                        noise_removal_cnt[2]+=1
-                        
                     '''右の監視'''
                     if (-85 <= direction < -45): #右方向停止範囲に検出
                         noise_removal_cnt[3]+=1  
@@ -112,7 +126,7 @@ class LiDAR_Subscriber(Node):
                         noise_removal_cnt[11]+=1 
             
             for i in range(len(noise_removal_cnt)):
-                if (20 <= noise_removal_cnt[i]):   # データ数が少ない場合、ノイズとみなす
+                if (5 <= noise_removal_cnt[i]):   # データ数が少ない場合、ノイズとみなす
                     self.obstacle_info.data[i] = True
 
             self.pub.publish(self.obstacle_info)
@@ -120,12 +134,13 @@ class LiDAR_Subscriber(Node):
         else:
             #self.get_logger().info("No obstacles detected.")
             self.pub.publish(self.obstacle_info)
+            
     '''k-平均法による外れ値除去'''
     def remove_outlier(self, near_floor_list):
         z = [data[2] for data in near_floor_list]
 
         Z = np.array(z).reshape(-1, 1)
-        kmeans = KMeans(n_clusters=2, random_state=0, init='k-means++')
+        kmeans = KMeans(n_clusters=2, random_state=0, init='k-means++', verbose=0)
         kmeans.fit(Z)
         labels = kmeans.labels_
 
