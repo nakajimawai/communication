@@ -1,6 +1,4 @@
 import rclpy
-import time
-import csv
 import math
 import socket
 import pickle
@@ -39,18 +37,22 @@ class LiDAR_Subscriber(Node):
         z = []
         for data in xyz_points:
             if -1.6 <= data[2] <= 0.0: # nan以外のデータを取り出す
-                direction = math.degrees(math.atan2(data[1], data[0])) # 障害物の方向を算出
-                x = data[0]*1000 - 500 #電動車いすに乗せた際のオフセット
+                x = data[0]*1000  
                 y = data[1]*1000
-                z = data[2]*1000
+                z = data[2]*1000 + 1550 # 床かの高さを0mmとする
                 intensity = data[3]
+
+                direction = math.degrees(math.atan2(y, x))
+                x = x - 500 # 電動車いすに乗せた際のオフセット
                 distance = math.sqrt((x**2)+(y**2))
-                if distance <= 900:
-                    if -45 < direction < 45: # 前方の距離データは専用のリストに格納、エッジ効果による外れ値除去のため
-                        self.forward_obstacle_list.append((x+500, y, z, intensity)) # 角度の算出をするのでxをもとの値に戻す
+                x = x + 500 # 角度の算出をするのでxをもとの値に戻す
+
+                if distance <= 2700:
+                    if (-45 < direction < 45) and (1000 <= x): # ユーザ、PCを除く前方の距離データは専用のリストに格納、エッジ効果による外れ値除去のため
+                        self.forward_obstacle_list.append((x, y, z, intensity, distance)) 
                     else:
-                        if -1540 < z:
-                            self.obstacle_list.append((x+500, y, z, intensity))
+                        if 20 < z: 
+                            self.obstacle_list.append((x, y, z, intensity, distance, direction))
 
     '''障害物の方向を算出、通信用リストに追加'''
     def Obstacle_Detection(self):
@@ -61,81 +63,106 @@ class LiDAR_Subscriber(Node):
             near_floor_list = []# 床の外れ値を除くためのクラスタリング用リスト
             above_floor_list = [] # 床より上    のデータ
             for data in self.forward_obstacle_list:
-                if -1600 <= data[2] <= -1450: # 床付近を監視
-                    near_floor_list.append(data)
+                if (data[4] <= 900) and (1000 <= data[0]): # 監視範囲かつユーザとノートPC以外の場合
+                    if -50 <= data[2] <= 100: # 床付近を監視
+                        near_floor_list.append(data)
 
-                elif -1450 < data[2]: # 床より上を監視
-                    above_floor_list.append(data)
+                    elif 100 < data[2]: # 床より上を監視
+                        above_floor_list.append(data)
 
             if 2 <= len(near_floor_list): #データが2つ以上ないとクラスタリングはできない
                 filtered_obstacle_list = self.remove_outlier(near_floor_list) # エッジ効果で生じる外れ値を除去
                 for data in filtered_obstacle_list:
-                    if -1540 <= data[2]:
+                    if 20 <= data[2]:
                         direction= math.degrees(math.atan2(data[1], data[0]))
 
-                        if (20 <= direction < 45) and (500 < data[0]): #前方警告範囲に検出、ユーザの距離データは除く
+                        if (20 <= direction < 45): #前方警告範囲に検知
                             noise_removal_cnt[0]+=1
-                        if (-20 <= direction < 20) and (1000 < data[0]): #前方停止範囲に検出、ユーザと視線入力用ノートPCの距離データは除く
+                        if (-20 <= direction < 20): #前方停止範囲に検知
                             noise_removal_cnt[1]+=1
-                        if (-45 <= direction < -20) and (500 < data[0]): #前方警告範囲に検出、ユーザの距離データは除く
+                        if (-45 <= direction < -20): #前方警告範囲に検知
                             noise_removal_cnt[2]+=1
 
-            if above_floor_list:# 障害物が検出された場合
+            if above_floor_list:# エッジ効果起きないとこで障害物が検知された場合
                 for data in above_floor_list:
-                    direction= math.degrees(math.atan2(data[1], data[0]))
+                        direction= math.degrees(math.atan2(data[1], data[0]))
 
-                    if (20 <= direction < 45) and (500 < data[0]): #前方警告範囲に検出、ユーザの距離データは除く
-                        noise_removal_cnt[0]+=1
-                    if (-20 <= direction < 20) and (1000 < data[0]): #前方停止範囲に検出、ユーザと視線入力用ノートPCの距離データは除く
-                        noise_removal_cnt[1]+=1
-                    if (-45 <= direction < -20) and (500 < data[0]): #前方警告範囲に検出、ユーザの距離データは除く
-                        noise_removal_cnt[2]+=1
+                        if (20 <= direction < 45): #前方警告範囲に検知
+                            noise_removal_cnt[0]+=1
+                        if (-20 <= direction < 20): #前方停止範囲に検知
+                            noise_removal_cnt[1]+=1
+                        if (-45 <= direction < -20): #前方警告範囲に検知
+                            noise_removal_cnt[2]+=1
 
-        if self.obstacle_list:   # 障害物が検出された場合
-            for x, y, z, intensity in self.obstacle_list:
-                direction = math.degrees(math.atan2(y, x))
-                if (2.0 < intensity):   # 反射強度の低い座標データを除去
-                    '''右の監視'''
-                    if (-85 <= direction < -45): #右方向停止範囲に検出
-                        noise_removal_cnt[3]+=1  
-                          
-                    if (-110 <= direction < -85): #右方向警告範囲に検出
-                        noise_removal_cnt[4]+=1
+        for i in range(3):
+            if (3 <= noise_removal_cnt[i]):   # データ数が少ない場合、ノイズとみなす
+                if i == 1:
+                    angle = self.angle_calculation(self.forward_obstacle_list) # 検知した物体の傾斜角度を算出
+                    if 8.0 <= angle:
+                        self.obstacle_info.data[1] = True # 角度が8°以上の場合、スロープではなく障害物とみなす
 
-                    if (-135 <= direction < -110): #右方向警告範囲に検出
-                       noise_removal_cnt[5]+=1 
-
-                    '''後ろの監視'''
-                    if (-160 <= direction < -135): #後方警告範囲に検出
-                        noise_removal_cnt[6]+=1 
-                                                                                    
-                    if (-180 <= direction <= -160) or (160 <= direction < 180):   #後方停止範囲に検出
-                        noise_removal_cnt[7]+=1
-                        
-                    if (135 <= direction < 160): #後方警告範囲に検出
-                        noise_removal_cnt[8]+=1
-                            
-                    '''左の監視'''
-                    if (110 <= direction < 135): #左方向警告範囲に検出
-                        noise_removal_cnt[9]+=1 
-
-                    if (85 <= direction < 110): #左方向警告範囲に検出
-                        noise_removal_cnt[10]+=1 
-                            
-                    if (45 <= direction < 85):   #左方向停止範囲に検出
-                        noise_removal_cnt[11]+=1 
-            
-            for i in range(len(noise_removal_cnt)):
-                if (5 <= noise_removal_cnt[i]):   # データ数が少ない場合、ノイズとみなす
+                else:
                     self.obstacle_info.data[i] = True
 
+        if self.obstacle_list:   # 障害物が検出された場合
+            XYZ_list = []
+            for x, y, z, intensity, distance, direction in self.obstacle_list:
+                if (160 <= abs(direction) <= 180): # 後退方向も一応スロープの識別を行うために個別で監視
+                    XYZ_list.append((x, y, z))
+                    if (abs(x) <= 800): # 他の範囲より広めに監視
+                        self.obstacle_info.data[7] = True
+                else:
+                    if (distance <= 900):
+                        '''右の監視'''
+                        if (-85 <= direction < -45): #右方向停止範囲に検出
+                            #noise_removal_cnt[3]+=1  
+                            self.obstacle_info.data[3] = True
+
+                        if (-110 <= direction < -85): #右方向警告範囲に検出
+                            #noise_removal_cnt[4]+=1
+                            self.obstacle_info.data[4] = True
+
+                        if (-135 <= direction < -110): #右方向警告範囲に検出
+                            #noise_removal_cnt[5]+=1 
+                            self.obstacle_info.data[5] = True
+
+
+                        '''後ろの監視'''
+                        if (-160 <= direction < -135): #後方警告範囲に検出
+                            #noise_removal_cnt[6]+=1
+                            self.obstacle_info.data[6] = True 
+                                                                                    
+                            
+                        if (135 <= direction < 160): #後方警告範囲に検出
+                            #noise_removal_cnt[8]+=1
+                            self.obstacle_info.data[8] = True
+                                
+                        '''左の監視'''
+                        if (110 <= direction < 135): #左方向警告範囲に検出
+                            #noise_removal_cnt[9]+=1
+                            self.obstacle_info.data[9] = True 
+
+                        if (85 <= direction < 110): #左方向警告範囲に検出
+                            #noise_removal_cnt[10]+=1 
+                            self.obstacle_info.data[10] = True
+                                
+                        if (45 <= direction < 85):   #左方向停止範囲に検出
+                            #noise_removal_cnt[11]+=1 
+                            self.obstacle_info.data[11] = True
+
+            if self.obstacle_info.data[7]:
+                angle = self.angle_calculation(XYZ_list) # 検知した物体の傾斜角度を算出
+                if angle < 8.0: # 8° 下回るなら障害物でなくスロープとみなす
+                    self.obstacle_info.data[7] = False
+
             self.pub.publish(self.obstacle_info)
+
 
         else:
             #self.get_logger().info("No obstacles detected.")
             self.pub.publish(self.obstacle_info)
             
-    '''k-平均法による外れ値除去'''
+    '''k-平均法による外れ値除去（床）'''
     def remove_outlier(self, near_floor_list):
         z = [data[2] for data in near_floor_list]
 
@@ -168,6 +195,59 @@ class LiDAR_Subscriber(Node):
         final_near_floor_list = [data for i, data in enumerate(near_floor_list) if (z[i] >= lower_bound and z[i] <= upper_bound)]
 
         return final_near_floor_list
+    
+    '''傾斜角度の算出'''
+    def angle_calculation(self, obstacle_list):
+        angle_list = []
+        for data in obstacle_list:
+            x = abs(data[0]) - 1000 # 傾斜角度算出のためのオフセット
+            y = data[1]
+            z = data[2]
+            if (abs(y) <= 400): # 幅800mm以内のデータで角度算出 
+                angle = math.degrees(math.atan2(z, x))
+                angle_list.append(angle)
+        if 2 <= len(angle_list): # データは2個以上ないとクラスタリングできない
+            filtered_angle_list = self.remove_angle_outlier(angle_list) # 傾斜角度の外れ値除去
+
+            filtered_angle_ave = sum(filtered_angle_list) / len(filtered_angle_list) 
+
+            return filtered_angle_ave
+        else: # 算出した傾斜角度が1つならそのまま返す
+            return angle
+
+    '''k-平均法による外れ値除去（傾斜角度）'''
+    def remove_angle_outlier(self, angle_list):
+
+        ANGLE = np.array(angle_list).reshape(-1, 1)
+        kmeans = KMeans(n_clusters=2, random_state=0, init='k-means++', verbose=0)
+        kmeans.fit(ANGLE)
+        labels = kmeans.labels_
+
+        # 暫定の正常値と外れ値にクラスタリング
+        count_cluster0 = np.sum(labels == 0)
+        count_cluster1 = np.sum(labels == 1)
+
+        if count_cluster0 < count_cluster1:  # 要素数が少ない方を暫定の外れ値クラスタとする
+            normal_cluster_label = 1
+        else:
+            normal_cluster_label = 0
+
+        normal_indices = np.where(labels == normal_cluster_label)[0] # 正常値クラスタのインデックス
+
+        # 正常値クラスタの値のみで平均値μと標準偏差σを求める
+        normal_values = np.array(angle_list)[normal_indices]
+        mu = np.mean(normal_values)
+        sigma = np.std(normal_values)
+
+        # 平均値から±3σ離れているz座標を最終的な外れ値とする
+        lower_bound = mu - 2 * sigma
+        upper_bound = mu + 2 * sigma
+
+        # 最終的な外れ値となったz座標を含むnear_floor_listの行は削除して新たなリストを取得する
+        final_near_floor_list = [data for i, data in enumerate(angle_list) if (angle_list[i] >= lower_bound and angle_list[i] <= upper_bound)]
+
+        return final_near_floor_list
+
     
 
 '''障害物情報を購読してノートPC1に送信するノード'''         
