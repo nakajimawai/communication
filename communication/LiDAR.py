@@ -12,6 +12,7 @@ from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 from sklearn.cluster import KMeans
 import warnings
+import sys
 
 class LiDAR_Subscriber(Node):
 
@@ -107,9 +108,9 @@ class LiDAR_Subscriber(Node):
         if self.obstacle_list:   # 障害物が検出された場合
             XYZ_list = []
             for x, y, z, intensity, distance, direction in self.obstacle_list:
-                if (160 <= abs(direction) <= 180): # 後退方向も一応スロープの識別を行うために個別で監視
-                    XYZ_list.append((x, y, z))
-                    if (abs(x) <= 800): # 他の範囲より広めに監視
+                if (150 <= abs(direction) <= 180): # 後退方向も一応スロープの識別を行うために個別で監視
+                    #XYZ_list.append((x, y, z))
+                    if (distance <= 900) or (abs(x) <= 800): # 他の範囲より広めに監視
                         self.obstacle_info.data[7] = True
                 else:
                     if (distance <= 900):
@@ -149,12 +150,12 @@ class LiDAR_Subscriber(Node):
                         if (45 <= direction < 85):   #左方向停止範囲に検出
                             #noise_removal_cnt[11]+=1 
                             self.obstacle_info.data[11] = True
-
+            '''
             if self.obstacle_info.data[7]:
                 angle = self.angle_calculation(XYZ_list) # 検知した物体の傾斜角度を算出
                 if angle < 8.0: # 8° 下回るなら障害物でなくスロープとみなす
                     self.obstacle_info.data[7] = False
-
+            '''
             self.pub.publish(self.obstacle_info)
 
 
@@ -261,17 +262,29 @@ class Send_Obstacle_Info(Node):
         self.server_socket_o.bind(server_address_obstacle)
         self.server_socket_o.listen(1)
 
+        self.str_obstacle_info = BoolMultiArray()
+        self.str_obstacle_info.data = [False]*12 # 前回の障害物情報
+
     def obstacle_info_callback(self, obstacle_msg):
         try:
-            self.client_socket_o, self.client_address_o = self.server_socket_o.accept()   # クライアントからの接続を待機
-            #print("クライアントが接続しました:", self.client_address_o)     
-            data_o = pickle.dumps(obstacle_msg.data)    # ブール値の配列をバイト列に変換
-            self.client_socket_o.send(data_o) 
-            self.client_socket_o.close()
+            for i, bool in enumerate(obstacle_msg.data):
+                if bool != self.str_obstacle_info.data[i]: # 前回と障害物情報がどこかしら変わってたら送信
+                    self.client_socket_o, self.client_address_o = self.server_socket_o.accept()   # クライアントからの接続を待機
+                    #print("クライアントが接続しました:", self.client_address_o)     
+                    data_o = pickle.dumps(obstacle_msg.data)    # ブール値の配列をバイト列に変換
+                    self.client_socket_o.send(data_o) 
+                    self.client_socket_o.close()
+                    
+                    break
+                else:
+                    continue
+
+            self.str_obstacle_info = obstacle_msg
         except :
             print("クライアントが接続を切断しました")
             self.client_socket_o.close()
             self.server_socket_o.close()
+            
                
 
 '''socket_topicの文字を購読して電動車いすの状態をノートPC1に送信するノード'''
