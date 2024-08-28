@@ -58,34 +58,50 @@ class Socket_Subscriber(Node):
         
         timer_velocity_period = 0.01 #seconds
         self.timer_velocity = self.create_timer(timer_velocity_period, self.timer_velocity_callback)
-        
+
+        self.config = self.read_config('/home/ubuntu/dev_ws/src/communication/communication/config.txt') # 設定速度を読み込む
+        self.straight_V = float(self.config['直進速度'])
+        self.rotation_V = float(self.config['旋回速度'])
+        self.diagonal_V = float(self.config['斜め移動速度'])
+
+    '''電動車いす速度のコンフィグレーションファイルを読み込む関数'''
+    def read_config(self, filepath):
+        config = {}
+        with open(filepath, 'r') as file:
+            for line in file:
+                name, value = line.strip().split('=')
+                config[name] = value
+        print(config)
+        return config
+
+    '''購読した走行指令文字に基づいて速度設定して制御を行う関数'''
     def callback(self, msg):
         #str_msg = msg.data
         
         if msg.data == 'w': # 前進
-            self.twist.linear.x = 1.6
+            self.twist.linear.x = 1.5 * self.straight_V
             self.twist.angular.z = 0.0
         elif msg.data == 'x': # 後退
-            self.twist.linear.x = -4.0 #-4.6
+            self.twist.linear.x = -3.8 * self.straight_V #-4.6
             self.twist.angular.z = 0.0
         elif msg.data == 'q': # 左斜め前移動
-            self.twist.linear.x = 0.7
-            self.twist.angular.z = 1.1
+            self.twist.linear.x = 0.7 * self.diagonal_V
+            self.twist.angular.z = 1.1 * self.diagonal_V
         elif msg.data == 'e': # 右斜め前移動
-            self.twist.linear.x = 0.7
-            self.twist.angular.z = -1.1
+            self.twist.linear.x = 0.7 * self.diagonal_V
+            self.twist.angular.z = -1.1 * self.diagonal_V
         elif msg.data == 'c': # 映像から見て左斜め後移動
-            self.twist.linear.x = -1.75
-            self.twist.angular.z = 1.1
+            self.twist.linear.x = -1.75 * self.diagonal_V
+            self.twist.angular.z = 1.1 * self.diagonal_V
         elif msg.data == 'z': # 映像から見て右斜め後移動
-            self.twist.linear.x = -1.75
-            self.twist.angular.z = -1.1
+            self.twist.linear.x = -1.75 * self.diagonal_V
+            self.twist.angular.z = -1.1 * self.diagonal_V
         elif msg.data == 'a' or msg.data == 'b_a': # ccw旋回
             self.twist.linear.x = 0.0
-            self.twist.angular.z = 1.1
+            self.twist.angular.z = 1.1 * self.rotation_V
         elif msg.data == 'd' or msg.data == 'b_d': # cw旋回
             self.twist.linear.x = 0.0
-            self.twist.angular.z = -1.1
+            self.twist.angular.z = -1.1 * self.rotation_V
         elif msg.data == 'f': # 停止とプログラム終了
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.0
@@ -131,7 +147,7 @@ class Obstacle_Info_Subscriber(Node):
             self.pub_socket_stop.publish(self.msg_stop)
         elif (obstacle_info.data[3]) and (self.msg_str.data == 'd'):
             self.pub_socket_stop.publish(self.msg_stop)
-        elif (obstacle_info.data[4]) and (self.msg_str.data == 'a'):
+        elif (obstacle_info.data[9]) and (self.msg_str.data == 'a'):
             self.pub_socket_stop.publish(self.msg_stop)
         elif (obstacle_info.data[5]) and (self.msg_str.data == 'c'): # 映像から見て左斜め後
             self.pub_socket_stop.publish(self.msg_stop)
@@ -141,7 +157,7 @@ class Obstacle_Info_Subscriber(Node):
             self.pub_socket_stop.publish(self.msg_stop)
         elif (obstacle_info.data[8]) and (self.msg_str.data == 'b_d'):
             self.pub_socket_stop.publish(self.msg_stop)
-        elif (obstacle_info.data[9]) and (self.msg_str.data == 'b_a'):
+        elif (obstacle_info.data[4]) and (self.msg_str.data == 'b_a'):
             self.pub_socket_stop.publish(self.msg_stop)
 def main():
     rclpy.init()
