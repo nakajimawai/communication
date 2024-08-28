@@ -12,7 +12,6 @@ from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 from sklearn.cluster import KMeans
 import warnings
-import sys
 
 class LiDAR_Subscriber(Node):
 
@@ -27,7 +26,7 @@ class LiDAR_Subscriber(Node):
     def callback(self, lidar_msg):
         xyz_points = point_cloud2.read_points(lidar_msg,field_names=('x','y','z','intensity'))
         self.Filter_Points(xyz_points)
-        self.obstacle_info.data = [False]*12
+        self.obstacle_info.data = [False]*10
         self.Obstacle_Detection()         
         
     def Filter_Points(self, xyz_points):
@@ -49,7 +48,7 @@ class LiDAR_Subscriber(Node):
                 x = x + 500 # 角度の算出をするのでxをもとの値に戻す
 
                 if distance <= 2700:
-                    if (-45 < direction < 45) and (1000 <= x): # ユーザ、PCを除く前方の距離データは専用のリストに格納、エッジ効果による外れ値除去のため
+                    if (-54 < direction < 54) and (1000 <= x): # ユーザ、PCを除く前方の距離データは専用のリストに格納、エッジ効果による外れ値除去のため
                         self.forward_obstacle_list.append((x, y, z, intensity, distance)) 
                     else:
                         if 20 < z: 
@@ -57,7 +56,7 @@ class LiDAR_Subscriber(Node):
 
     '''障害物の方向を算出、通信用リストに追加'''
     def Obstacle_Detection(self):
-        noise_removal_cnt = [0]*12
+        noise_removal_cnt = [0]*10
 
         '''前の監視'''
         if self.forward_obstacle_list:
@@ -74,25 +73,25 @@ class LiDAR_Subscriber(Node):
             if 2 <= len(near_floor_list): #データが2つ以上ないとクラスタリングはできない
                 filtered_obstacle_list = self.remove_outlier(near_floor_list) # エッジ効果で生じる外れ値を除去
                 for data in filtered_obstacle_list:
-                    if 20 <= data[2]:
+                    if 20 <= data[2]: # 検知物体が20mm以上の高さを持つ場合
                         direction= math.degrees(math.atan2(data[1], data[0]))
 
-                        if (20 <= direction < 45): #前方警告範囲に検知
+                        if (18 <= direction < 54): #左斜め前移動方向に検知
                             noise_removal_cnt[0]+=1
-                        if (-20 <= direction < 20): #前方停止範囲に検知
+                        if (-20 <= direction < 20): #前進方向に検知
                             noise_removal_cnt[1]+=1
-                        if (-45 <= direction < -20): #前方警告範囲に検知
+                        if (-54 <= direction < -18): #右斜め前移動方向に検知
                             noise_removal_cnt[2]+=1
 
             if above_floor_list:# エッジ効果起きないとこで障害物が検知された場合
                 for data in above_floor_list:
                         direction= math.degrees(math.atan2(data[1], data[0]))
 
-                        if (20 <= direction < 45): #前方警告範囲に検知
+                        if (18 <= direction < 54): #左斜め前移動方向に検知
                             noise_removal_cnt[0]+=1
-                        if (-20 <= direction < 20): #前方停止範囲に検知
+                        if (-20 <= direction < 20): #前進方向に検知
                             noise_removal_cnt[1]+=1
-                        if (-45 <= direction < -20): #前方警告範囲に検知
+                        if (-54 <= direction < -18): #右斜め前移動方向に検知
                             noise_removal_cnt[2]+=1
 
         for i in range(3):
@@ -108,54 +107,43 @@ class LiDAR_Subscriber(Node):
         if self.obstacle_list:   # 障害物が検出された場合
             XYZ_list = []
             for x, y, z, intensity, distance, direction in self.obstacle_list:
-                if (150 <= abs(direction) <= 180): # 後退方向も一応スロープの識別を行うために個別で監視
-                    #XYZ_list.append((x, y, z))
-                    if (distance <= 900) or (abs(x) <= 800): # 他の範囲より広めに監視
+                if (160 <= abs(direction) <= 180): # 後退方向も一応スロープの識別を行うために個別で監視
+                    XYZ_list.append((x, y, z))
+                    if (abs(x) <= 800): # 他の範囲より広めに監視
+                        self.obstacle_info.data[6] = True
+
+                if (-162 <= direction < -126): #映像から見て左斜め後移動方向に検出
+                    if (abs(x) <= 500): # 他の範囲より広めに監視
+                        #noise_removal_cnt[5]+=1 
+                        self.obstacle_info.data[5] = True                 
+                    
+                if (126 <= direction < 162): #映像から見て右斜め後移動方向に検出
+                    if (abs(x) <= 500): # 他の範囲より広めに監視
+                        #noise_removal_cnt[8]+=1
                         self.obstacle_info.data[7] = True
                 else:
                     if (distance <= 900):
-                        '''右の監視'''
-                        if (-85 <= direction < -45): #右方向停止範囲に検出
+                        if (-90 <= direction < -54): #前方走行時のcw旋回方向に検出
                             #noise_removal_cnt[3]+=1  
                             self.obstacle_info.data[3] = True
 
-                        if (-110 <= direction < -85): #右方向警告範囲に検出
+                        if (-126 <= direction < -90): #後方走行時のccw旋回方向に検出
                             #noise_removal_cnt[4]+=1
                             self.obstacle_info.data[4] = True
-
-                        if (-135 <= direction < -110): #右方向警告範囲に検出
-                            #noise_removal_cnt[5]+=1 
-                            self.obstacle_info.data[5] = True
-
-
-                        '''後ろの監視'''
-                        if (-160 <= direction < -135): #後方警告範囲に検出
-                            #noise_removal_cnt[6]+=1
-                            self.obstacle_info.data[6] = True 
-                                                                                    
-                            
-                        if (135 <= direction < 160): #後方警告範囲に検出
-                            #noise_removal_cnt[8]+=1
-                            self.obstacle_info.data[8] = True
                                 
-                        '''左の監視'''
-                        if (110 <= direction < 135): #左方向警告範囲に検出
+                        if (90 <= direction < 126): #後方走行時のcw旋回方向に検出
                             #noise_removal_cnt[9]+=1
-                            self.obstacle_info.data[9] = True 
+                            self.obstacle_info.data[8] = True 
 
-                        if (85 <= direction < 110): #左方向警告範囲に検出
+                        if (54 <= direction < 90): #前方走行時のccw旋回方向に検出
                             #noise_removal_cnt[10]+=1 
-                            self.obstacle_info.data[10] = True
-                                
-                        if (45 <= direction < 85):   #左方向停止範囲に検出
-                            #noise_removal_cnt[11]+=1 
-                            self.obstacle_info.data[11] = True
-            '''
-            if self.obstacle_info.data[7]:
+                            self.obstacle_info.data[9] = True
+
+            if self.obstacle_info.data[6]:
                 angle = self.angle_calculation(XYZ_list) # 検知した物体の傾斜角度を算出
                 if angle < 8.0: # 8° 下回るなら障害物でなくスロープとみなす
-                    self.obstacle_info.data[7] = False
-            '''
+                    self.obstacle_info.data[6] = False
+
             self.pub.publish(self.obstacle_info)
 
 
@@ -255,36 +243,45 @@ class LiDAR_Subscriber(Node):
 class Send_Obstacle_Info(Node):
     def  __init__(self):
         super().__init__('send_obstacle_info')
-        self.sub = self.create_subscription(BoolMultiArray, 'obstacle_info', self.obstacle_info_callback, 10)
+        self.sub = self.create_subscription(BoolMultiArray, 'obstacle_info', self.obstacle_info_callback, 10) 
+
         # 障害物情報を送信するサーバーソケットを作成
         server_address_obstacle = ('192.168.1.102', 50000)
         self.server_socket_o = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket_o.bind(server_address_obstacle)
         self.server_socket_o.listen(1)
 
-        self.str_obstacle_info = BoolMultiArray()
-        self.str_obstacle_info.data = [False]*12 # 前回の障害物情報
+        self.cnt = 0
 
     def obstacle_info_callback(self, obstacle_msg):
         try:
-            for i, bool in enumerate(obstacle_msg.data):
-                if bool != self.str_obstacle_info.data[i]: # 前回と障害物情報がどこかしら変わってたら送信
-                    self.client_socket_o, self.client_address_o = self.server_socket_o.accept()   # クライアントからの接続を待機
-                    #print("クライアントが接続しました:", self.client_address_o)     
-                    data_o = pickle.dumps(obstacle_msg.data)    # ブール値の配列をバイト列に変換
-                    self.client_socket_o.send(data_o) 
-                    self.client_socket_o.close()
-                    
-                    break
-                else:
-                    continue
+            if self.cnt <= 10: # 開始から1秒は無条件で障害物情報を送信
+                self.client_socket_o, self.client_address_o = self.server_socket_o.accept()   # クライアントからの接続を待機
+                data_o = pickle.dumps(obstacle_msg.data)    # ブール値の配列をバイト列に変換
+                self.client_socket_o.send(data_o) 
+                self.client_socket_o.close()
 
-            self.str_obstacle_info = obstacle_msg
-        except :
+                self.cnt += 1
+                self.str_obstacle_info = obstacle_msg # 前回の障害物情報を保持
+            else:
+                for i, bool in enumerate(obstacle_msg.data):
+                    if bool != self.str_obstacle_info.data[i]: # 前回と障害物情報がどこかしら変わってたら送信
+                        self.client_socket_o, self.client_address_o = self.server_socket_o.accept()   # クライアントからの接続を待機
+                        data_o = pickle.dumps(obstacle_msg.data)    # ブール値の配列をバイト列に変換
+                        self.client_socket_o.send(data_o) 
+                        self.client_socket_o.close()
+                        
+                        break
+                    else:
+                        continue
+
+                self.str_obstacle_info = obstacle_msg
+        except Exception as e:
+            print(e)
             print("クライアントが接続を切断しました")
             self.client_socket_o.close()
             self.server_socket_o.close()
-            
+        #'''
                
 
 '''socket_topicの文字を購読して電動車いすの状態をノートPC1に送信するノード'''
@@ -303,11 +300,11 @@ class Send_State(Node):
     def state_info_callback(self, state_msg):
         print("状態を購読", state_msg)
         
-        if state_msg.data == 'q':
+        if state_msg.data == 'f':
             self.client_socket_s.close()
             self.server_socket_s.close()
             print("切断")
-        elif state_msg.data != 'q':
+        elif state_msg.data != 'f':
             self.client_socket_s, self.client_address_s = self.server_socket_s.accept()   # クライアントからの接続を待機
             print("状態受信用クライアントが接続しました:", self.client_address_s) 
             if state_msg.data == 's':
