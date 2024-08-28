@@ -39,7 +39,7 @@ class Socket_Publisher(Node):
         
         self.pub_socket.publish(msg)
         
-        if msg.data == 'q':
+        if msg.data == 'f':
             client_socket.close()
             self.server_socket.close()
             self.timer_socket.cancel()
@@ -62,23 +62,35 @@ class Socket_Subscriber(Node):
     def callback(self, msg):
         #str_msg = msg.data
         
-        if msg.data == 'w':
+        if msg.data == 'w': # 前進
             self.twist.linear.x = 1.6
             self.twist.angular.z = 0.0
-        elif msg.data == 'x':
-            self.twist.linear.x = -4.6
+        elif msg.data == 'x': # 後退
+            self.twist.linear.x = -4.0 #-4.6
             self.twist.angular.z = 0.0
-        elif msg.data == 'a':
+        elif msg.data == 'q': # 左斜め前移動
+            self.twist.linear.x = 0.7
+            self.twist.angular.z = 1.1
+        elif msg.data == 'e': # 右斜め前移動
+            self.twist.linear.x = 0.7
+            self.twist.angular.z = -1.1
+        elif msg.data == 'c': # 映像から見て左斜め後移動
+            self.twist.linear.x = -1.75
+            self.twist.angular.z = 1.1
+        elif msg.data == 'z': # 映像から見て右斜め後移動
+            self.twist.linear.x = -1.75
+            self.twist.angular.z = -1.1
+        elif msg.data == 'a' or msg.data == 'b_a': # ccw旋回
             self.twist.linear.x = 0.0
             self.twist.angular.z = 1.1
-        elif msg.data == 'd':
+        elif msg.data == 'd' or msg.data == 'b_d': # cw旋回
             self.twist.linear.x = 0.0
             self.twist.angular.z = -1.1
-        elif msg.data == 'q':
+        elif msg.data == 'f': # 停止とプログラム終了
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.0
             exit()
-        else:
+        else: # 停止
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.0
             
@@ -111,15 +123,26 @@ class Obstacle_Info_Subscriber(Node):
     def callback_lidar(self, obstacle_info):
         #↓移動方向に障害物がある場合は停止
         #print(obstacle_info)
-        if (obstacle_info.data[1]) and (self.msg_str.data == 'w'):
+        if (obstacle_info.data[0]) and (self.msg_str.data == 'q'): # 左斜め前
+            self.pub_socket_stop.publish(self.msg_stop)        
+        elif (obstacle_info.data[1]) and (self.msg_str.data == 'w'): 
             self.pub_socket_stop.publish(self.msg_stop)
-        elif(obstacle_info.data[3]) and (self.msg_str.data == 'd'):
+        elif (obstacle_info.data[2]) and (self.msg_str.data == 'e'): # 右斜め前
             self.pub_socket_stop.publish(self.msg_stop)
-        elif(obstacle_info.data[11]) and (self.msg_str.data == 'a'):
+        elif (obstacle_info.data[3]) and (self.msg_str.data == 'd'):
             self.pub_socket_stop.publish(self.msg_stop)
-        elif(obstacle_info.data[7]) and (self.msg_str.data == 'x'):
+        elif (obstacle_info.data[4]) and (self.msg_str.data == 'a'):
             self.pub_socket_stop.publish(self.msg_stop)
-                    
+        elif (obstacle_info.data[5]) and (self.msg_str.data == 'c'): # 映像から見て左斜め後
+            self.pub_socket_stop.publish(self.msg_stop)
+        elif (obstacle_info.data[6]) and (self.msg_str.data == 'x'):
+            self.pub_socket_stop.publish(self.msg_stop)
+        elif (obstacle_info.data[7]) and (self.msg_str.data == 'z'): # 映像から見て右斜め後
+            self.pub_socket_stop.publish(self.msg_stop)
+        elif (obstacle_info.data[8]) and (self.msg_str.data == 'b_d'):
+            self.pub_socket_stop.publish(self.msg_stop)
+        elif (obstacle_info.data[9]) and (self.msg_str.data == 'b_a'):
+            self.pub_socket_stop.publish(self.msg_stop)
 def main():
     rclpy.init()
     socket_node = Socket_Publisher()
