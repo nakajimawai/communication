@@ -64,6 +64,8 @@ class Socket_Subscriber(Node):
         self.rotation_V = float(self.config['旋回速度'])
         self.diagonal_V = float(self.config['斜め移動速度'])
 
+        self.mode_flag= True # ユーザ操縦モードか介助者操縦モードかを保持するフラグ(True：ユーザ、False：介助者) 
+
     '''電動車いす速度のコンフィグレーションファイルを読み込む関数'''
     def read_config(self, filepath):
         config = {}
@@ -78,35 +80,69 @@ class Socket_Subscriber(Node):
     def callback(self, msg):
         #str_msg = msg.data
         
-        if msg.data == 'w': # 前進
+        if msg.data == 's':
+            if self.mode_flag: # ユーザ操縦モードのとき
+                self.twist.linear.x = 0.0
+                self.twist.angular.z = 0.0
+            else:              # 介助者操縦モードのとき
+                self.twist.linear.x = 0.0
+                self.twist.angular.z = 0.0
+                self.timer_velocity.cancel()# ジョイスティックでも動かせるようにタイマを一時停止
+
+        elif msg.data == 'w': # 前進
+            self.timer_velocity.reset()# タイマを再開
             self.twist.linear.x = 1.5 * self.straight_V
             self.twist.angular.z = 0.0
+
         elif msg.data == 'x': # 後退
+            self.timer_velocity.reset()# タイマを再開
             self.twist.linear.x = -3.8 * self.straight_V #-4.6
             self.twist.angular.z = 0.0
+
         elif msg.data == 'q': # 左斜め前移動
+            self.timer_velocity.reset()# タイマを再開
             self.twist.linear.x = 0.7 * self.diagonal_V
             self.twist.angular.z = 1.1 * self.diagonal_V
+
         elif msg.data == 'e': # 右斜め前移動
+            self.timer_velocity.reset()# タイマを再開
             self.twist.linear.x = 0.7 * self.diagonal_V
             self.twist.angular.z = -1.1 * self.diagonal_V
+
         elif msg.data == 'c': # 映像から見て左斜め後移動
+            self.timer_velocity.reset()# タイマを再開
             self.twist.linear.x = -1.75 * self.diagonal_V
             self.twist.angular.z = 1.1 * self.diagonal_V
+
         elif msg.data == 'z': # 映像から見て右斜め後移動
+            self.timer_velocity.reset()# タイマを再開
             self.twist.linear.x = -1.75 * self.diagonal_V
             self.twist.angular.z = -1.1 * self.diagonal_V
+
         elif msg.data == 'a' or msg.data == 'b_a': # ccw旋回
+            self.timer_velocity.reset()# タイマを再開
             self.twist.linear.x = 0.0
             self.twist.angular.z = 1.1 * self.rotation_V
+
         elif msg.data == 'd' or msg.data == 'b_d': # cw旋回
+            self.timer_velocity.reset()# タイマを再開
             self.twist.linear.x = 0.0
             self.twist.angular.z = -1.1 * self.rotation_V
+
         elif msg.data == 'f': # 停止とプログラム終了
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.0
             exit()
-        else: # 停止
+
+        elif msg.data == 'helper': 
+            self.timer_velocity.cancel()# タイマを一時停止
+            self.mode_flag = False
+
+        elif msg.data == 'user' and not self.mode_flag: 
+            self.timer_velocity.reset()# タイマを再開
+            self.mode_flag = True
+            
+        else: # 電動車いすを停止
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.0
             
