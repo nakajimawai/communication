@@ -13,6 +13,8 @@ from geometry_msgs.msg import Twist
 from sklearn.cluster import KMeans
 import warnings
 
+mode_flag = True # ユーザ操縦モードか介助者操縦モードかを保持するフラグ(True：ユーザ、False：介助者) 
+
 class LiDAR_Subscriber(Node):
 
     def __init__(self):
@@ -144,8 +146,12 @@ class LiDAR_Subscriber(Node):
                 if angle < 8.0: # 8° 下回るなら障害物でなくスロープとみなす
                     self.obstacle_info.data[6] = False
 
-            self.pub.publish(self.obstacle_info)
-
+            global mode_flag
+            if mode_flag : # ユーザ操縦モードの場合、障害物情報をそのまま配信
+                self.pub.publish(self.obstacle_info)
+            else:          # 介助者操縦モードの場合、周囲に障害物がないことにして配信（衝突防止動作を無効に）
+                self.obstacle_info.data = [False]*10
+                self.pub.publish(self.obstacle_info)
 
         else:
             #self.get_logger().info("No obstacles detected.")
@@ -300,11 +306,22 @@ class Send_State(Node):
     def state_info_callback(self, state_msg):
         print("状態を購読", state_msg)
         
+        global mode_flag
+
         if state_msg.data == 'f':
             self.client_socket_s.close()
             self.server_socket_s.close()
             print("切断")
-        elif state_msg.data != 'f':
+
+        elif state_msg.data == 'helper':
+            print("介助者操縦モード、衝突防止動作を無効に")
+            mode_flag = False
+
+        elif state_msg.data == 'user':
+            print("ユーザ操縦モード、衝突防止動作を有効に")
+            mode_flag = True
+
+        else:
             self.client_socket_s, self.client_address_s = self.server_socket_s.accept()   # クライアントからの接続を待機
             print("状態受信用クライアントが接続しました:", self.client_address_s) 
             if state_msg.data == 's':
