@@ -12,6 +12,8 @@ from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 from sklearn.cluster import KMeans
 import warnings
+from std_msgs.msg import Int32
+import time
 
 mode_flag = True # ユーザ操縦モードか介助者操縦モードかを保持するフラグ(True：ユーザ、False：介助者) 
 
@@ -23,9 +25,16 @@ class LiDAR_Subscriber(Node):
         self.pub = self.create_publisher(BoolMultiArray, 'obstacle_info', 10)
         self.obstacle_info = BoolMultiArray()
         
+        self.config = self.read_config('/home/ubuntu/dev_ws/src/communication/communication/config.txt') # 設定速度を読み込む
+        self.monitoring_range = float(self.config['監視範囲'])
+
         warnings.filterwarnings("ignore")# 警告を無効にする
+
+        self.lidar_processing_times = [] # 処理時間を保存するリスト
             
     def callback(self, lidar_msg):
+        self.start_time = time.time()  # コールバック開始時刻
+
         xyz_points = point_cloud2.read_points(lidar_msg,field_names=('x','y','z','intensity'))
         self.Filter_Points(xyz_points)
         self.obstacle_info.data = [False]*10
@@ -65,7 +74,7 @@ class LiDAR_Subscriber(Node):
             near_floor_list = []# 床の外れ値を除くためのクラスタリング用リスト
             above_floor_list = [] # 床より上    のデータ
             for data in self.forward_obstacle_list:
-                if (data[4] <= 900) and (1000 <= data[0]): # 監視範囲かつユーザとノートPC以外の場合
+                if (data[4] <= 900 * self.monitoring_range) and (1000 <= data[0]): # 監視範囲かつユーザとノートPC以外の場合
                     if -50 <= data[2] <= 100: # 床付近を監視
                         near_floor_list.append(data)
 
@@ -80,8 +89,14 @@ class LiDAR_Subscriber(Node):
 
                         if (18 <= direction < 54): #左斜め前移動方向に検知
                             noise_removal_cnt[0]+=1
+                            #print(data[0], data[1], data[2])
+
                         if (-20 <= direction < 20): #前進方向に検知
                             noise_removal_cnt[1]+=1
+                            if data[4] <= 600:
+                                noise_removal_cnt[0]+=1 # 左斜め前移動中にぶつかる可能性があるため、同時に監視
+                                noise_removal_cnt[2]+=1 # 右斜め前移動中にぶつかる可能性があるため、同時に監視
+
                         if (-54 <= direction < -18): #右斜め前移動方向に検知
                             noise_removal_cnt[2]+=1
 
@@ -91,8 +106,15 @@ class LiDAR_Subscriber(Node):
 
                         if (18 <= direction < 54): #左斜め前移動方向に検知
                             noise_removal_cnt[0]+=1
+                            #print(data[0], data[1], data[2])
+
                         if (-20 <= direction < 20): #前進方向に検知
                             noise_removal_cnt[1]+=1
+                            #print(data[0], data[1], data[2], data[3])
+                            if data[4] <= 600:
+                                noise_removal_cnt[0]+=1 # 左斜め前移動中にぶつかる可能性があるため、同時に監視
+                                noise_removal_cnt[2]+=1 # 右斜め前移動中にぶつかる可能性があるため、同時に監視
+
                         if (-54 <= direction < -18): #右斜め前移動方向に検知
                             noise_removal_cnt[2]+=1
 
@@ -113,33 +135,44 @@ class LiDAR_Subscriber(Node):
                     XYZ_list.append((x, y, z))
                     if (abs(x) <= 800): # 他の範囲より広めに監視
                         self.obstacle_info.data[6] = True
-
+                    #'''
+                    if (abs(x) <= 600): # 左斜め後移動中にぶつかる可能性があるので同時に監視
+                        self.obstacle_info.data[5] = True 
+                    if (abs(x) <= 600): # 右斜め後移動中にぶつかる可能性があるので同時に監視
+                        self.obstacle_info.data[7] = True     
+                    #'''                      
                 if (-162 <= direction < -126): #映像から見て左斜め後移動方向に検出
-                    if (abs(x) <= 500): # 他の範囲より広めに監視
+                    if (abs(x) <= 600): # 他の範囲より広めに監視
                         #noise_removal_cnt[5]+=1 
-                        self.obstacle_info.data[5] = True                 
+                        self.obstacle_info.data[5] = True
+                                  
                     
                 if (126 <= direction < 162): #映像から見て右斜め後移動方向に検出
-                    if (abs(x) <= 500): # 他の範囲より広めに監視
+                    if (abs(x) <= 600): # 他の範囲より広めに監視
                         #noise_removal_cnt[8]+=1
                         self.obstacle_info.data[7] = True
+     
                 else:
-                    if (distance <= 900):
-                        if (-90 <= direction < -54): #前方走行時のcw旋回方向に検出
+                    if (distance <= 900 * self.monitoring_range):
+                        if (-74 <= direction < -54): #前方走行時のcw旋回方向に検出
                             #noise_removal_cnt[3]+=1  
                             self.obstacle_info.data[3] = True
-
+                            if distance <= 600:
+                                self.obstacle_info.data[7] = True
+                        '''
                         if (-126 <= direction < -90): #後方走行時のccw旋回方向に検出
                             #noise_removal_cnt[4]+=1
-                            self.obstacle_info.data[4] = True
+                            self.obstacle_info.data[9] = True
                                 
                         if (90 <= direction < 126): #後方走行時のcw旋回方向に検出
                             #noise_removal_cnt[9]+=1
-                            self.obstacle_info.data[8] = True 
-
-                        if (54 <= direction < 90): #前方走行時のccw旋回方向に検出
+                            self.obstacle_info.data[3] = True 
+                        '''
+                        if (54 <= direction < 74): #前方走行時のccw旋回方向に検出
                             #noise_removal_cnt[10]+=1 
                             self.obstacle_info.data[9] = True
+                            if distance <= 600:
+                                self.obstacle_info.data[5] = True
 
             if self.obstacle_info.data[6]:
                 angle = self.angle_calculation(XYZ_list) # 検知した物体の傾斜角度を算出
@@ -156,7 +189,26 @@ class LiDAR_Subscriber(Node):
         else:
             #self.get_logger().info("No obstacles detected.")
             self.pub.publish(self.obstacle_info)
-            
+
+        self.end_time = time.time() # 障害物検知終了時刻
+        processing_time = (self.end_time - self.start_time) * 1000 # ミリ秒に変換
+        self.lidar_processing_times.append(processing_time) # 処理時間をリストに追加
+
+        # 100回分データが集まったら平均を算出しファイルに出力
+        if len(self.lidar_processing_times) == 100:
+            self.caluculate_average_and_save("/home/ubuntu/dev_ws/src/communication/communication/r=1500mm_detection_time.txt", self.lidar_processing_times)
+
+    def caluculate_average_and_save(self, filename, times_list):
+        average_time  = sum(times_list) / len(times_list) # 平均値計算
+
+        #テキストファイルにデータを保存
+        with open(filename, 'w') as f:
+            f.write("処理時間（ms）:\n")
+            for time_value in times_list:
+                f.write(f"{time_value:.3f}\n")
+            f.write(f"\n平均処理時間: {average_time:.3f} ms\n")
+        self.get_logger().info(f"{filename}にデータを保存")
+
     '''k-平均法による外れ値除去（床）'''
     def remove_outlier(self, near_floor_list):
         z = [data[2] for data in near_floor_list]
@@ -243,13 +295,24 @@ class LiDAR_Subscriber(Node):
 
         return final_near_floor_list
 
-    
+    '''電動車いす速度のコンフィグレーションファイルを読み込む関数'''
+    def read_config(self, filepath):
+        config = {}
+        with open(filepath, 'r') as file:
+            for line in file:
+                name, value = line.strip().split('=')
+                config[name] = value
+        print(config)
+        return config
 
 '''障害物情報を購読してノートPC1に送信するノード'''         
 class Send_Obstacle_Info(Node):
     def  __init__(self):
         super().__init__('send_obstacle_info')
         self.sub = self.create_subscription(BoolMultiArray, 'obstacle_info', self.obstacle_info_callback, 10) 
+
+        self.pub_led_color = self.create_publisher(Int32, 'led_color', 10) # パトライト用パブリッシャ
+        self.led_msg = Int32()
 
         # 障害物情報を送信するサーバーソケットを作成
         server_address_obstacle = ('192.168.1.102', 50000)
@@ -284,9 +347,13 @@ class Send_Obstacle_Info(Node):
                 self.str_obstacle_info = obstacle_msg
         except Exception as e:
             print(e)
-            print("クライアントが接続を切断しました")
+            print("クライアントが接続を切断もしくは、障害物情報を送信するサーバでエラー")
             self.client_socket_o.close()
             self.server_socket_o.close()
+
+            self.led_msg.data = 1
+            self.pub_led_color.publish(self.led_msg) # LEDを赤点灯
+            exit()
         #'''
                
 
@@ -312,6 +379,7 @@ class Send_State(Node):
             self.client_socket_s.close()
             self.server_socket_s.close()
             print("切断")
+            exit()
 
         elif state_msg.data == 'helper':
             print("介助者操縦モード、衝突防止動作を無効に")
