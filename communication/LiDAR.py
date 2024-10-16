@@ -12,7 +12,7 @@ from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 from sklearn.cluster import KMeans
 import warnings
-from std_msgs.msg import Int32
+from std_msgs.msg import Int32, Float32
 import time
 
 mode_flag = True # ユーザ操縦モードか介助者操縦モードかを保持するフラグ(True：ユーザ、False：介助者) 
@@ -24,21 +24,29 @@ class LiDAR_Subscriber(Node):
         self.sub = self.create_subscription(PointCloud2, 'rslidar_points', self.callback, 10)
         self.pub = self.create_publisher(BoolMultiArray, 'obstacle_info', 10)
         self.obstacle_info = BoolMultiArray()
-        
-        self.config = self.read_config('/home/ubuntu/dev_ws/src/communication/communication/config.txt') # 設定速度を読み込む
-        self.monitoring_range = float(self.config['監視範囲'])
+
+        self.detection_range_sub = self.create_subscription(Float32, 'detection_range', self.detection_range_callback, 10) # 検知範囲用のサブスクライバ
+        self.detection_range = Float32()
+        self.detection_range.data = 0.0
 
         warnings.filterwarnings("ignore")# 警告を無効にする
 
         self.lidar_processing_times = [] # 処理時間を保存するリスト
             
+    '''LiDARデータのコールバック関数'''
     def callback(self, lidar_msg):
-        self.start_time = time.time()  # コールバック開始時刻
+        #self.start_time = time.time()  # コールバック開始時刻
 
         xyz_points = point_cloud2.read_points(lidar_msg,field_names=('x','y','z','intensity'))
         self.Filter_Points(xyz_points)
         self.obstacle_info.data = [False]*10
-        self.Obstacle_Detection()         
+        self.Obstacle_Detection()
+
+    '''検知範囲のコールバック関数'''
+    def detection_range_callback(self, range_msg):
+        self.detection_range = range_msg
+        print(f"検知範囲={self.detection_range.data}")
+
         
     def Filter_Points(self, xyz_points):
         self.obstacle_list = [] # 障害物の座標データを格納するリスト
@@ -67,137 +75,142 @@ class LiDAR_Subscriber(Node):
 
     '''障害物の方向を算出、通信用リストに追加'''
     def Obstacle_Detection(self):
-        noise_removal_cnt = [0]*10
-
-        '''前の監視'''
-        if self.forward_obstacle_list:
-            near_floor_list = []# 床の外れ値を除くためのクラスタリング用リスト
-            above_floor_list = [] # 床より上    のデータ
-            for data in self.forward_obstacle_list:
-                if (data[4] <= 900 * self.monitoring_range) and (1000 <= data[0]): # 監視範囲かつユーザとノートPC以外の場合
-                    if -50 <= data[2] <= 100: # 床付近を監視
-                        near_floor_list.append(data)
-
-                    elif 100 < data[2]: # 床より上を監視
-                        above_floor_list.append(data)
-
-            if 2 <= len(near_floor_list): #データが2つ以上ないとクラスタリングはできない
-                filtered_obstacle_list = self.remove_outlier(near_floor_list) # エッジ効果で生じる外れ値を除去
-                for data in filtered_obstacle_list:
-                    if 20 <= data[2]: # 検知物体が20mm以上の高さを持つ場合
-                        direction= math.degrees(math.atan2(data[1], data[0]))
-
-                        if (18 <= direction < 54): #左斜め前移動方向に検知
-                            noise_removal_cnt[0]+=1
-                            #print(data[0], data[1], data[2])
-
-                        if (-20 <= direction < 20): #前進方向に検知
-                            noise_removal_cnt[1]+=1
-                            if data[4] <= 600:
-                                noise_removal_cnt[0]+=1 # 左斜め前移動中にぶつかる可能性があるため、同時に監視
-                                noise_removal_cnt[2]+=1 # 右斜め前移動中にぶつかる可能性があるため、同時に監視
-
-                        if (-54 <= direction < -18): #右斜め前移動方向に検知
-                            noise_removal_cnt[2]+=1
-
-            if above_floor_list:# エッジ効果起きないとこで障害物が検知された場合
-                for data in above_floor_list:
-                        direction= math.degrees(math.atan2(data[1], data[0]))
-
-                        if (18 <= direction < 54): #左斜め前移動方向に検知
-                            noise_removal_cnt[0]+=1
-                            #print(data[0], data[1], data[2])
-
-                        if (-20 <= direction < 20): #前進方向に検知
-                            noise_removal_cnt[1]+=1
-                            #print(data[0], data[1], data[2], data[3])
-                            if data[4] <= 600:
-                                noise_removal_cnt[0]+=1 # 左斜め前移動中にぶつかる可能性があるため、同時に監視
-                                noise_removal_cnt[2]+=1 # 右斜め前移動中にぶつかる可能性があるため、同時に監視
-
-                        if (-54 <= direction < -18): #右斜め前移動方向に検知
-                            noise_removal_cnt[2]+=1
-
-        for i in range(3):
-            if (3 <= noise_removal_cnt[i]):   # データ数が少ない場合、ノイズとみなす
-                if i == 1:
-                    angle = self.angle_calculation(self.forward_obstacle_list) # 検知した物体の傾斜角度を算出
-                    if 8.0 <= angle:
-                        self.obstacle_info.data[1] = True # 角度が8°以上の場合、スロープではなく障害物とみなす
-
-                else:
-                    self.obstacle_info.data[i] = True
-
-        if self.obstacle_list:   # 障害物が検出された場合
-            XYZ_list = []
-            for x, y, z, intensity, distance, direction in self.obstacle_list:
-                if (160 <= abs(direction) <= 180): # 後退方向も一応スロープの識別を行うために個別で監視
-                    XYZ_list.append((x, y, z))
-                    if (abs(x) <= 800): # 他の範囲より広めに監視
-                        self.obstacle_info.data[6] = True
-                    #'''
-                    if (abs(x) <= 600): # 左斜め後移動中にぶつかる可能性があるので同時に監視
-                        self.obstacle_info.data[5] = True 
-                    if (abs(x) <= 600): # 右斜め後移動中にぶつかる可能性があるので同時に監視
-                        self.obstacle_info.data[7] = True     
-                    #'''                      
-                if (-162 <= direction < -126): #映像から見て左斜め後移動方向に検出
-                    if (abs(x) <= 600): # 他の範囲より広めに監視
-                        #noise_removal_cnt[5]+=1 
-                        self.obstacle_info.data[5] = True
-                                  
-                    
-                if (126 <= direction < 162): #映像から見て右斜め後移動方向に検出
-                    if (abs(x) <= 600): # 他の範囲より広めに監視
-                        #noise_removal_cnt[8]+=1
-                        self.obstacle_info.data[7] = True
-     
-                else:
-                    if (distance <= 900 * self.monitoring_range):
-                        if (-74 <= direction < -54): #前方走行時のcw旋回方向に検出
-                            #noise_removal_cnt[3]+=1  
-                            self.obstacle_info.data[3] = True
-                            if distance <= 600:
-                                self.obstacle_info.data[7] = True
-                        '''
-                        if (-126 <= direction < -90): #後方走行時のccw旋回方向に検出
-                            #noise_removal_cnt[4]+=1
-                            self.obstacle_info.data[9] = True
-                                
-                        if (90 <= direction < 126): #後方走行時のcw旋回方向に検出
-                            #noise_removal_cnt[9]+=1
-                            self.obstacle_info.data[3] = True 
-                        '''
-                        if (54 <= direction < 74): #前方走行時のccw旋回方向に検出
-                            #noise_removal_cnt[10]+=1 
-                            self.obstacle_info.data[9] = True
-                            if distance <= 600:
-                                self.obstacle_info.data[5] = True
-
-            if self.obstacle_info.data[6]:
-                angle = self.angle_calculation(XYZ_list) # 検知した物体の傾斜角度を算出
-                if angle < 8.0: # 8° 下回るなら障害物でなくスロープとみなす
-                    self.obstacle_info.data[6] = False
-
-            global mode_flag
-            if mode_flag : # ユーザ操縦モードの場合、障害物情報をそのまま配信
-                self.pub.publish(self.obstacle_info)
-            else:          # 介助者操縦モードの場合、周囲に障害物がないことにして配信（衝突防止動作を無効に）
-                self.obstacle_info.data = [False]*10
-                self.pub.publish(self.obstacle_info)
-
+        if self.detection_range.data == 0.0:
+            print("検知範囲受信待機中")
         else:
-            #self.get_logger().info("No obstacles detected.")
-            self.pub.publish(self.obstacle_info)
+            noise_removal_cnt = [0]*10
 
-        self.end_time = time.time() # 障害物検知終了時刻
-        processing_time = (self.end_time - self.start_time) * 1000 # ミリ秒に変換
-        self.lidar_processing_times.append(processing_time) # 処理時間をリストに追加
+            '''前の監視'''
+            if self.forward_obstacle_list:
+                near_floor_list = []# 床の外れ値を除くためのクラスタリング用リスト
+                above_floor_list = [] # 床より上    のデータ
+                for data in self.forward_obstacle_list:
+                    if (data[4] <= 900 * self.detection_range.data) and (1000 <= data[0]): # 監視範囲かつユーザとノートPC以外の場合
+                        if -50 <= data[2] <= 100: # 床付近を監視
+                            near_floor_list.append(data)
 
-        # 100回分データが集まったら平均を算出しファイルに出力
-        if len(self.lidar_processing_times) == 100:
-            self.caluculate_average_and_save("/home/ubuntu/dev_ws/src/communication/communication/r=1500mm_detection_time.txt", self.lidar_processing_times)
+                        elif 100 < data[2]: # 床より上を監視
+                            above_floor_list.append(data)
 
+                if 2 <= len(near_floor_list): #データが2つ以上ないとクラスタリングはできない
+                    filtered_obstacle_list = self.remove_outlier(near_floor_list) # エッジ効果で生じる外れ値を除去
+                    for data in filtered_obstacle_list:
+                        if 20 <= data[2]: # 検知物体が20mm以上の高さを持つ場合
+                            direction= math.degrees(math.atan2(data[1], data[0]))
+
+                            if (18 <= direction < 54): #左斜め前移動方向に検知
+                                noise_removal_cnt[0]+=1
+                                #print(data[0], data[1], data[2])
+
+                            if (-20 <= direction < 20): #前進方向に検知
+                                noise_removal_cnt[1]+=1
+                                if data[4] <= 600:
+                                    noise_removal_cnt[0]+=1 # 左斜め前移動中にぶつかる可能性があるため、同時に監視
+                                    noise_removal_cnt[2]+=1 # 右斜め前移動中にぶつかる可能性があるため、同時に監視
+
+                            if (-54 <= direction < -18): #右斜め前移動方向に検知
+                                noise_removal_cnt[2]+=1
+
+                if above_floor_list:# エッジ効果起きないとこで障害物が検知された場合
+                    for data in above_floor_list:
+                            direction= math.degrees(math.atan2(data[1], data[0]))
+
+                            if (18 <= direction < 54): #左斜め前移動方向に検知
+                                noise_removal_cnt[0]+=1
+                                #print(data[0], data[1], data[2])
+
+                            if (-20 <= direction < 20): #前進方向に検知
+                                noise_removal_cnt[1]+=1
+                                #print(data[0], data[1], data[2], data[3])
+                                if data[4] <= 600:
+                                    noise_removal_cnt[0]+=1 # 左斜め前移動中にぶつかる可能性があるため、同時に監視
+                                    noise_removal_cnt[2]+=1 # 右斜め前移動中にぶつかる可能性があるため、同時に監視
+
+                            if (-54 <= direction < -18): #右斜め前移動方向に検知
+                                noise_removal_cnt[2]+=1
+
+            for i in range(3):
+                if (3 <= noise_removal_cnt[i]):   # データ数が少ない場合、ノイズとみなす
+                    if i == 1:
+                        angle = self.angle_calculation(self.forward_obstacle_list) # 検知した物体の傾斜角度を算出
+                        if 8.0 <= angle:
+                            self.obstacle_info.data[1] = True # 角度が8°以上の場合、スロープではなく障害物とみなす
+
+                    else:
+                        self.obstacle_info.data[i] = True
+
+            if self.obstacle_list:   # 障害物が検出された場合
+                XYZ_list = []
+                for x, y, z, intensity, distance, direction in self.obstacle_list:
+                    if (160 <= abs(direction) <= 180): # 後退方向も一応スロープの識別を行うために個別で監視
+                        XYZ_list.append((x, y, z))
+                        if (abs(x) <= 800): # 他の範囲より広めに監視
+                            self.obstacle_info.data[6] = True
+                        #'''
+                        if (abs(x) <= 600): # 左斜め後移動中にぶつかる可能性があるので同時に監視
+                            self.obstacle_info.data[5] = True 
+                        if (abs(x) <= 600): # 右斜め後移動中にぶつかる可能性があるので同時に監視
+                            self.obstacle_info.data[7] = True     
+                        #'''                      
+                    if (-162 <= direction < -126): #映像から見て左斜め後移動方向に検出
+                        if (abs(x) <= 600): # 他の範囲より広めに監視
+                            #noise_removal_cnt[5]+=1 
+                            self.obstacle_info.data[5] = True
+                                    
+                        
+                    if (126 <= direction < 162): #映像から見て右斜め後移動方向に検出
+                        if (abs(x) <= 600): # 他の範囲より広めに監視
+                            #noise_removal_cnt[8]+=1
+                            self.obstacle_info.data[7] = True
+        
+                    else:
+                        if (distance <= 900 * self.detection_range.data):
+                            if (-74 <= direction < -54): #前方走行時のcw旋回方向に検出
+                                #noise_removal_cnt[3]+=1  
+                                self.obstacle_info.data[3] = True
+                                if distance <= 600:
+                                    self.obstacle_info.data[7] = True
+                            '''
+                            if (-126 <= direction < -90): #後方走行時のccw旋回方向に検出
+                                #noise_removal_cnt[4]+=1
+                                self.obstacle_info.data[9] = True
+                                    
+                            if (90 <= direction < 126): #後方走行時のcw旋回方向に検出
+                                #noise_removal_cnt[9]+=1
+                                self.obstacle_info.data[3] = True 
+                            '''
+                            if (54 <= direction < 74): #前方走行時のccw旋回方向に検出
+                                #noise_removal_cnt[10]+=1 
+                                self.obstacle_info.data[9] = True
+                                if distance <= 600:
+                                    self.obstacle_info.data[5] = True
+
+                if self.obstacle_info.data[6]:
+                    angle = self.angle_calculation(XYZ_list) # 検知した物体の傾斜角度を算出
+                    if angle < 8.0: # 8° 下回るなら障害物でなくスロープとみなす
+                        self.obstacle_info.data[6] = False
+
+                global mode_flag
+                if mode_flag : # ユーザ操縦モードの場合、障害物情報をそのまま配信
+                    self.pub.publish(self.obstacle_info)
+                else:          # 介助者操縦モードの場合、周囲に障害物がないことにして配信（衝突防止動作を無効に）
+                    self.obstacle_info.data = [False]*10
+                    self.pub.publish(self.obstacle_info)
+
+            else:
+                #self.get_logger().info("No obstacles detected.")
+                self.pub.publish(self.obstacle_info)
+
+            '''
+            self.end_time = time.time() # 障害物検知終了時刻
+            processing_time = (self.end_time - self.start_time) * 1000 # ミリ秒に変換
+            self.lidar_processing_times.append(processing_time) # 処理時間をリストに追加
+
+            # 100回分データが集まったら平均を算出しファイルに出力
+            if len(self.lidar_processing_times) == 100:
+                self.caluculate_average_and_save("/home/ubuntu/dev_ws/src/communication/communication/r=1500mm_detection_time.txt", self.lidar_processing_times)
+            '''
+                
     def caluculate_average_and_save(self, filename, times_list):
         average_time  = sum(times_list) / len(times_list) # 平均値計算
 
@@ -295,15 +308,6 @@ class LiDAR_Subscriber(Node):
 
         return final_near_floor_list
 
-    '''電動車いす速度のコンフィグレーションファイルを読み込む関数'''
-    def read_config(self, filepath):
-        config = {}
-        with open(filepath, 'r') as file:
-            for line in file:
-                name, value = line.strip().split('=')
-                config[name] = value
-        print(config)
-        return config
 
 '''障害物情報を購読してノートPC1に送信するノード'''         
 class Send_Obstacle_Info(Node):
