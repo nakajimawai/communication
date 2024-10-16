@@ -5,8 +5,8 @@ from rclpy.node import Node
 from std_msgs.msg import String
 from geometry_msgs.msg import Twist
 from ros2_whill.msg import BoolMultiArray
-from std_msgs.msg import Int32
-import time
+from std_msgs.msg import Int32, Float32
+import time, sys
 
 #str_msg = 's'   #電動車いすを停止させるか判断するための変数
 
@@ -46,10 +46,13 @@ class Socket_Publisher(Node):
             
             self.pub_socket.publish(msg)
             
+            # プログラム終了処理
             if msg.data == 'f':
                 client_socket.close()
                 self.server_socket.close()
                 self.timer_socket.cancel()
+
+                sys.exit()
 
             #raise ValueError("意図的にエラーを発生")
 
@@ -63,7 +66,7 @@ class Detection_Range_Publisher(Node):
     def __init__(self):
         super().__init__('detection_range_publisher')
         self.pub_det_range = self.create_publisher(Int32, 'detection_range', 10)
-        
+
 
 '''配信してある文字に基づいて走行制御を行うノード'''        
 class Socket_Subscriber(Node):
@@ -73,6 +76,7 @@ class Socket_Subscriber(Node):
         self.sub_socket = self.create_subscription(String, 'socket_topic', self.callback, 10)
         self.pub_velocity = self.create_publisher(Twist, 'cmd_vel', 10)
         self.pub_led_color = self.create_publisher(Int32, 'led_color', 10) # パトライト用パブリッシャ
+        self.pub_detection_range = self.create_publisher(Float32, 'detection_range', 10) # 検知範囲用のパブリッシャ
 
         self.led_msg = Int32()
 
@@ -83,25 +87,67 @@ class Socket_Subscriber(Node):
         timer_velocity_period = 0.01 #seconds
         self.timer_velocity = self.create_timer(timer_velocity_period, self.timer_velocity_callback)
 
-        self.config = self.read_config('/home/ubuntu/dev_ws/src/communication/communication/config.txt') # 設定速度を読み込む
-        self.straight_V = float(self.config['直進速度'])
-        self.rotation_V = float(self.config['旋回速度'])
-        self.diagonal_V = float(self.config['斜め移動速度'])
+        # 設定ファイルの保存場所
+        self.file_save_path = '/home/ubuntu/dev_ws/src/communication/communication/config.txt'
+        self.file_listener_once() # 設定ファイルを一度だけ受信
 
         self.mode_flag= True # ユーザ操縦モードか介助者操縦モードかを保持するフラグ(True：ユーザ、False：介助者) 
         self.is_timer_active = True
 
         self.socket_msg = String() # ソケット通信で受け取った走行指令用の変数
 
-    '''電動車いす速度のコンフィグレーションファイルを読み込む関数'''
-    def read_config(self, filepath):
-        config = {}
-        with open(filepath, 'r') as file:
-            for line in file:
-                name, value = line.strip().split('=')
-                config[name] = value
-        print(config)
-        return config
+    def file_listener_once(self):
+        """設定ファイルを一度だけ受信する関数"""
+        # ソケットの設定
+        self.file_server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.file_server_socket.bind(('192.168.1.102', 65432))  # IPアドレスとポートを指定
+        self.file_server_socket.listen(1)
+
+        print("設定ファイルの受信待機中...")
+        client_socket, client_address = self.file_server_socket.accept()
+        print(f"設定ファイル接続: {client_address}")
+
+        try:
+            # 設定ファイルの受信と保存
+            with open(self.file_save_path, 'wb') as file:
+                while True:
+                    data = client_socket.recv(1024)
+                    if not data:
+                        break
+                    file.write(data)
+
+            print(f"設定ファイルを受信して保存しました: {self.file_save_path}")
+
+            # 設定ファイルを読み込んで速度設定
+            self.config = self.read_config(self.file_save_path)
+            self.straight_V = float(self.config['直進速度'])
+            self.rotation_V = float(self.config['旋回速度'])
+            self.diagonal_V = float(self.config['斜め移動速度'])
+            self.detection_range = float(self.config['検知範囲'])
+
+            print(f"直進速度={self.straight_V}, 旋回速度={self.rotation_V}, 斜め移動速度={self.diagonal_V}, 検知範囲={self.detection_range}")
+
+            # 検知範囲をトピックに配信
+            self.pub_detection_range.publish(Float32(data=self.detection_range))
+
+        except Exception as e:
+            print(f"設定ファイル受信中にエラーが発生しました: {e}")
+        finally:
+            client_socket.close()
+            self.file_server_socket.close()
+            print("設定ファイル受信用のソケットを閉じました")
+
+    def read_config(self, file_path):
+        """設定ファイルを読み込んで辞書形式に変換する関数"""
+        config_data = {}
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                for line in file:
+                    key, value = line.strip().split('=')
+                    config_data[key] = value
+        except Exception as e:
+            print(f"設定ファイルの読み込み中にエラーが発生しました: {e}")
+        return config_data
 
     '''購読した走行指令文字に基づいて速度設定して制御を行う関数'''
     def callback(self, msg):
