@@ -28,6 +28,8 @@ class Socket_Publisher(Node):
 
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # TIME WAIT状態にならないよう設定
+
         self.server_socket.bind((host_ip, host_port))
         
     def timer_socket_callback(self):
@@ -45,6 +47,8 @@ class Socket_Publisher(Node):
             print("受信メッセージ：", msg.data)
             
             self.pub_socket.publish(msg)
+
+            client_socket.close()
             
             # プログラム終了処理
             if msg.data == 'f':
@@ -234,12 +238,22 @@ class Socket_Subscriber(Node):
 
             self.led_msg.data = 2
             self.pub_led_color.publish(self.led_msg) #パトライトを緑点灯
+
+        elif msg.data == 'EG_stop': # 緊急停止
+            self.twist.linear.x = 0.0
+            self.twist.angular.z = 0.0    
+            self.is_timer_active = False# タイマを一時停止（ジョイスティックだけ動かせる）
+
+        elif msg.data == 'EG_stop_R': # 緊急停止解除
+            self.twist.linear.x = 0.0
+            self.twist.angular.z = 0.0  
+            self.is_timer_active = True# タイマを再開（ジョイスティックロック）
             
         else: # 電動車いすを停止
             self.twist.linear.x = 0.0
             self.twist.angular.z = 0.0
-            self.led_msg.data = 1
-            self.pub_led_color.publish(self.led_msg) #パトライトを赤点灯
+            #self.led_msg.data = 1
+            #self.pub_led_color.publish(self.led_msg) #パトライトを赤点灯
             
     def timer_velocity_callback(self):
         if self.is_timer_active:
@@ -363,3 +377,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
