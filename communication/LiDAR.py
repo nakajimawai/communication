@@ -67,7 +67,7 @@ class LiDAR_Subscriber(Node):
                 x = x + 500 # 角度の算出をするのでxをもとの値に戻す
 
                 if distance <= 2700:
-                    if (-54 < direction < 54) and (1000 <= x): # ユーザ、PCを除く前方の距離データは専用のリストに格納、エッジ効果による外れ値除去のため
+                    if (-54 < direction < 54) and (1100 <= x): # ユーザ、PCを除く前方の距離データは専用のリストに格納、エッジ効果による外れ値除去のため
                         self.forward_obstacle_list.append((x, y, z, intensity, distance)) 
                     else:
                         if 20 < z: 
@@ -76,7 +76,8 @@ class LiDAR_Subscriber(Node):
     '''障害物の方向を算出、通信用リストに追加'''
     def Obstacle_Detection(self):
         if self.detection_range.data == 0.0:
-            print("検知範囲受信待機中")
+            #print("検知範囲受信待機中")
+            pass
         else:
             noise_removal_cnt = [0]*10
 
@@ -85,7 +86,7 @@ class LiDAR_Subscriber(Node):
                 near_floor_list = []# 床の外れ値を除くためのクラスタリング用リスト
                 above_floor_list = [] # 床より上    のデータ
                 for data in self.forward_obstacle_list:
-                    if (data[4] <= 900 * self.detection_range.data) and (1000 <= data[0]): # 監視範囲かつユーザとノートPC以外の場合
+                    if (data[4] <= 900 * self.detection_range.data) and (1100 <= data[0]): # 監視範囲かつユーザとノートPC以外の場合
                         if -50 <= data[2] <= 100: # 床付近を監視
                             near_floor_list.append(data)
 
@@ -105,6 +106,7 @@ class LiDAR_Subscriber(Node):
                             if (-20 <= direction < 20): #前進方向に検知
                                 noise_removal_cnt[1]+=1
                                 if data[4] <= 600:
+                                    
                                     noise_removal_cnt[0]+=1 # 左斜め前移動中にぶつかる可能性があるため、同時に監視
                                     noise_removal_cnt[2]+=1 # 右斜め前移動中にぶつかる可能性があるため、同時に監視
 
@@ -121,8 +123,9 @@ class LiDAR_Subscriber(Node):
 
                             if (-20 <= direction < 20): #前進方向に検知
                                 noise_removal_cnt[1]+=1
-                                #print(data[0], data[1], data[2], data[3])
+                                print(data[0], data[1], data[2], data[3])
                                 if data[4] <= 600:
+                                    #print(data[0], data[1], data[2], data[3])
                                     noise_removal_cnt[0]+=1 # 左斜め前移動中にぶつかる可能性があるため、同時に監視
                                     noise_removal_cnt[2]+=1 # 右斜め前移動中にぶつかる可能性があるため、同時に監視
 
@@ -321,6 +324,7 @@ class Send_Obstacle_Info(Node):
         # 障害物情報を送信するサーバーソケットを作成
         server_address_obstacle = ('192.168.1.102', 50000)
         self.server_socket_o = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket_o.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # TIME WAIT状態にならないよう設定
         self.server_socket_o.bind(server_address_obstacle)
         self.server_socket_o.listen(1)
 
@@ -369,10 +373,11 @@ class Send_State(Node):
         
         server_address_state = ('192.168.1.102', 50010)
         self.server_socket_s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket_s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # TIME WAIT状態にならないよう設定
         self.server_socket_s.bind(server_address_state)
         self.server_socket_s.listen(1)
         
-        self.state = False
+        self.state = 'stop'
 
     def state_info_callback(self, state_msg):
         print("状態を購読", state_msg)
@@ -393,18 +398,26 @@ class Send_State(Node):
             print("ユーザ操縦モード、衝突防止動作を有効に")
             mode_flag = True
 
+        elif state_msg.data == 'EG_stop':
+            self.get_logger().info('緊急停止！！！！！！！！！！！！！')
+            self.state = state_msg.data
+            self.client_socket_s, self.client_address_s = self.server_socket_s.accept()   # クライアントからの接続を待機
+            self.client_socket_s.send(self.state.encode('utf-8'))
+            self.client_socket_s.close()
+
         else:
             self.client_socket_s, self.client_address_s = self.server_socket_s.accept()   # クライアントからの接続を待機
-            print("状態受信用クライアントが接続しました:", self.client_address_s) 
-            if state_msg.data == 's':
-                bool_byte = struct.pack('?', False)
-                self.client_socket_s.send(bool_byte)
-                print('Falseを送信')
+
+            if state_msg.data == 's' or state_msg.data == 'EG_stop_R':
+                self.state = 'stop'
+                self.client_socket_s.send(self.state.encode('utf-8'))
+                self.get_logger().info('stopを送信')
                 self.client_socket_s.close()
+
             else:
-                bool_byte = struct.pack('?', True)
-                self.client_socket_s.send(bool_byte)
-                print('Trueを送信')
+                self.state = 'move'
+                self.client_socket_s.send(self.state.encode("utf-8"))
+                self.get_logger().info('moveを送信')
                 self.client_socket_s.close()
         
 
