@@ -10,4 +10,5 @@ def generate_launch_description():
         Node(package='communication', executable='LiDAR', output='screen'),     
         Node(package='ros2_whill', executable='whill_modelc_controller', output='screen'),   
         Node(namespace='rslidar_sdk', package='rslidar_sdk', executable='rslidar_sdk_node', output='screen'),
+        Node(package='patlite_control', executable='patlite_node', output='screen')
     ])
